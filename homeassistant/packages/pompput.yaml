@@ -1,0 +1,188 @@
+# Pompput-monitor: Home Assistant-pakket
+#
+# Laden via `packages` in configuration.yaml, bijvoorbeeld:
+#   homeassistant:
+#     packages: !include_dir_named packages
+#
+# Contract: specs/001-pompput-monitor/contracts/esphome-homeassistant.md, sectie
+# "Home Assistant-pakket".
+# De entiteiten van het apparaat komen via de ESPHome-integratie (native API, met de sleutel uit
+# esphome/secrets.yaml). Dit pakket voegt alleen toe wat in Home Assistant moet gebeuren:
+# meldingen op afstand (FR-018, FR-019), herinneringen (repeat, FR-020), herstelmeldingen
+# (done_message, FR-021) en "bewaking niet bereikbaar" (FR-017).
+#
+# INSTALLATIE: vervang overal `REPLACE_ME` door je eigen notify-service, zonder "notify.",
+# bijvoorbeeld `mobile_app_mijn_telefoon` voor notify.mobile_app_mijn_telefoon.
+
+sensor:
+  # FR-009: aantal pompstarts in de afgelopen 24 uur
+  - platform: history_stats
+    name: "Pompput pompstarts 24 uur"
+    unique_id: pompput_pompstarts_24_uur
+    entity_id: binary_sensor.pompput_pomp
+    state: "on"
+    type: count
+    end: "{{ now() }}"
+    duration:
+      hours: 24
+
+input_boolean:
+  # Alleen voor homeassistant/dashboard-pompput.yaml: de instellingenkaart tonen of verbergen
+  pompput_toon_instellingen:
+    name: "Pompput instellingen tonen"
+    icon: mdi:cog
+
+template:
+  - binary_sensor:
+      # FR-017: geen gegevens van het apparaat gedurende 5 minuten
+      - name: "Pompput onbereikbaar"
+        unique_id: pompput_onbereikbaar
+        device_class: problem
+        delay_on: "00:05:00"
+        state: "{{ states('sensor.pompput_status') in ['unavailable', 'unknown'] }}"
+
+alert:
+  pompput_hoogwater:
+    name: "Alarm: hoogwater in pompput"
+    title: "Alarm: hoogwater in pompput"
+    entity_id: binary_sensor.pompput_hoogwater
+    state: "on"
+    repeat: 60
+    can_acknowledge: true
+    skip_first: false
+    message: >-
+      Het water staat boven de alarmdrempel.
+      Niveau: {{ states('sensor.pompput_vulgraad') }} % ({{ states('sensor.pompput_waterhoogte') }} cm).
+      Pomp: {{ 'draait' if is_state('binary_sensor.pompput_pomp', 'on') else 'staat stil' }}.
+      Sinds: {{ relative_time(states.binary_sensor.pompput_hoogwater.last_changed) }}
+    done_message: "Hersteld: hoogwater in pompput"
+    notifiers:
+      - REPLACE_ME  # je eigen notify-service
+
+  pompput_pomp_start_niet:
+    name: "Waarschuwing: pomp start niet"
+    title: "Waarschuwing: pomp start niet"
+    entity_id: binary_sensor.pompput_pomp_start_niet
+    state: "on"
+    repeat: 60
+    can_acknowledge: true
+    skip_first: false
+    message: >-
+      Het water staat boven het inschakelniveau, maar de pomp draait niet (vlotter, zekering
+      of stekker?).
+      Niveau: {{ states('sensor.pompput_vulgraad') }} % ({{ states('sensor.pompput_waterhoogte') }} cm).
+      Pomp: {{ 'draait' if is_state('binary_sensor.pompput_pomp', 'on') else 'staat stil' }}.
+      Sinds: {{ relative_time(states.binary_sensor.pompput_pomp_start_niet.last_changed) }}
+    done_message: "Hersteld: pomp start niet"
+    notifiers:
+      - REPLACE_ME  # je eigen notify-service
+
+  pompput_pomp_pompt_niet_af:
+    name: "Waarschuwing: pomp pompt niet af"
+    title: "Waarschuwing: pomp pompt niet af"
+    entity_id: binary_sensor.pompput_pomp_pompt_niet_af
+    state: "on"
+    repeat: 60
+    can_acknowledge: true
+    skip_first: false
+    message: >-
+      De pomp draait, maar het waterniveau daalt niet (verstopping, terugslagklep of te veel
+      toestroom?).
+      Niveau: {{ states('sensor.pompput_vulgraad') }} % ({{ states('sensor.pompput_waterhoogte') }} cm).
+      Pomp: {{ 'draait' if is_state('binary_sensor.pompput_pomp', 'on') else 'staat stil' }}.
+      Sinds: {{ relative_time(states.binary_sensor.pompput_pomp_pompt_niet_af.last_changed) }}
+    done_message: "Hersteld: pomp pompt niet af"
+    notifiers:
+      - REPLACE_ME  # je eigen notify-service
+
+  pompput_pomp_draait_te_lang:
+    name: "Waarschuwing: pomp draait te lang"
+    title: "Waarschuwing: pomp draait te lang"
+    entity_id: binary_sensor.pompput_pomp_draait_te_lang
+    state: "on"
+    repeat: 60
+    can_acknowledge: true
+    skip_first: false
+    message: >-
+      De pomp draait langer dan de maximale looptijd (vlotter blijft hangen of pomp loopt
+      droog?).
+      Niveau: {{ states('sensor.pompput_vulgraad') }} % ({{ states('sensor.pompput_waterhoogte') }} cm).
+      Pomp: {{ 'draait' if is_state('binary_sensor.pompput_pomp', 'on') else 'staat stil' }}.
+      Sinds: {{ relative_time(states.binary_sensor.pompput_pomp_draait_te_lang.last_changed) }}
+    done_message: "Hersteld: pomp draait te lang"
+    notifiers:
+      - REPLACE_ME  # je eigen notify-service
+
+  pompput_onbereikbaar:
+    name: "Storing: pompput-bewaking niet bereikbaar"
+    title: "Storing: pompput-bewaking niet bereikbaar"
+    entity_id: binary_sensor.pompput_onbereikbaar
+    state: "on"
+    repeat: 60
+    can_acknowledge: true
+    skip_first: false
+    message: >-
+      Home Assistant ontvangt al 5 minuten geen gegevens van de pompput-monitor
+      (geen stroom, geen WiFi of vastgelopen). Bij de put signaleren de led en de zoemer nog wel.
+      Laatst bekend niveau: {{ states('sensor.pompput_vulgraad') }} %
+      ({{ states('sensor.pompput_waterhoogte') }} cm).
+      Pomp: {{ 'draait' if is_state('binary_sensor.pompput_pomp', 'on') else 'staat stil' }}.
+      Sinds: {{ relative_time(states.binary_sensor.pompput_onbereikbaar.last_changed) }}
+    done_message: "Hersteld: pompput-bewaking weer bereikbaar"
+    notifiers:
+      - REPLACE_ME  # je eigen notify-service
+
+  pompput_niet_ingesteld:
+    name: "Storing: pompput niet ingesteld"
+    title: "Storing: pompput niet ingesteld"
+    entity_id: binary_sensor.pompput_niet_ingesteld
+    state: "on"
+    repeat: 60
+    can_acknowledge: true
+    skip_first: false
+    message: >-
+      De pompput-monitor is nog niet ingesteld: vul Afstand leeg, Afstand vol en
+      Inschakelniveau in (Instellingen > Apparaten > Pompput > Configuratie). Zonder deze
+      waarden is er geen vulgraad en geen pompbewaking.
+      Niveau: {{ states('sensor.pompput_vulgraad') }} % ({{ states('sensor.pompput_waterhoogte') }} cm).
+      Pomp: {{ 'draait' if is_state('binary_sensor.pompput_pomp', 'on') else 'staat stil' }}.
+      Sinds: {{ relative_time(states.binary_sensor.pompput_niet_ingesteld.last_changed) }}
+    done_message: "Hersteld: pompput is ingesteld"
+    notifiers:
+      - REPLACE_ME  # je eigen notify-service
+
+  pompput_niveausensor_storing:
+    name: "Storing: niveausensor"
+    title: "Storing: niveausensor"
+    entity_id: binary_sensor.pompput_niveausensor_storing
+    state: "on"
+    repeat: 60
+    can_acknowledge: true
+    skip_first: false
+    message: >-
+      De afstandsmeter geeft al langere tijd geen betrouwbare meting (condens, vuil of
+      spinnenweb op de sensor, een losse draad, of water tot aan de sensor). Het niveau is
+      daardoor onbekend; een actief hoogwater-alarm blijft staan.
+      Niveau: {{ states('sensor.pompput_vulgraad') }} % ({{ states('sensor.pompput_waterhoogte') }} cm).
+      Pomp: {{ 'draait' if is_state('binary_sensor.pompput_pomp', 'on') else 'staat stil' }}.
+      Sinds: {{ relative_time(states.binary_sensor.pompput_niveausensor_storing.last_changed) }}
+    done_message: "Hersteld: niveausensor"
+    notifiers:
+      - REPLACE_ME  # je eigen notify-service
+
+  pompput_stroomsensor_storing:
+    name: "Storing: stroomsensor"
+    title: "Storing: stroomsensor"
+    entity_id: binary_sensor.pompput_stroomsensor_storing
+    state: "on"
+    repeat: 60
+    can_acknowledge: true
+    skip_first: false
+    message: >-
+      De stroommeter geeft een onmogelijke waarde (geen voeding of een losse draad naar de
+      ACS712). Of de pomp draait is daardoor onbekend; de pomp zelf werkt gewoon door.
+      Niveau: {{ states('sensor.pompput_vulgraad') }} % ({{ states('sensor.pompput_waterhoogte') }} cm).
+      Sinds: {{ relative_time(states.binary_sensor.pompput_stroomsensor_storing.last_changed) }}
+    done_message: "Hersteld: stroomsensor"
+    notifiers:
+      - REPLACE_ME  # je eigen notify-service

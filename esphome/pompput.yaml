@@ -1,0 +1,2050 @@
+# Pompput-monitor: bewaakt een pompput buiten.
+# - Een HC-SR04 meet van bovenaf het waterniveau; een ACS712 in de fasedraad ziet of de pomp
+#   draait.
+# - Het apparaat bepaalt zelf zeven meldingen: hoogwater, drie pompwaarschuwingen, twee
+#   sensorstoringen en "niet ingesteld".
+# - Ter plaatse signaleren een RGBW-led en een piëzo-zoemer; Home Assistant krijgt alles via de
+#   versleutelde native API.
+# - Het apparaat bewaakt alleen. Het heeft geen uitgang naar de pomp (FR-007).
+#
+# Secties, in deze volgorde:
+#   1. substitutions: pinnen, constanten, grenzen, standaardwaarden en codes
+#   2. basis: esphome (on_boot), esp32, preferences, logger, wifi, api, ota, debug
+#   3. niveau: ultrasonic, niveau_verwerken, waterhoogte, vulgraad, afstand (ruw)
+#   4. pomp: adc, ct_clamp, pomp_bijwerken, pomp, looptijd, pompstroom, offset
+#   5. meldingen: melding_stap, de beoordelingsscripts, de zeven meldingen, status
+#   6. instellingen: globals, numbers, switch, instelling_toepassen
+#   7. signalering: led, zoemer, patroonscripts, BOOT-knop, Zoemer stil
+#   8. gebeurtenissen en diagnose: event, Laatste gebeurtenis, diagnose
+# ESPHome staat een sleutel als `sensor:` maar één keer toe. Sectie 1 en 2 staan daarom
+# bovenaan, en de secties 3-8 zijn elk een pakket in dit bestand (packages:); ESPHome voegt hun
+# lijsten samen. Een id komt maar in één sectie voor.
+#
+# Spec, plan, contracten en validatie: specs/001-pompput-monitor/
+# Pinnen: specs/001-pompput-monitor/contracts/hardware.md is gezaghebbend.
+# Elk script en elke entiteit noemt de requirements die het uitvoert (FR-0xx).
+
+# ---------------------------------------------------------------------------------------------
+# ---- 1. Substitutions ----
+# ---------------------------------------------------------------------------------------------
+# Alle pinnen, tijden, grenzen, standaardwaarden en codes. De logica bevat geen losse getallen
+# (constitutie V); alleen 0, true/false en de rekenkundige 1 en 2.
+substitutions:
+  # ---- Apparaat ----
+  device_name: "pompput"           # hostnaam pompput.local
+  friendly_name: "Pompput"         # naam in Home Assistant; de entity-id's volgen hieruit
+  project_version: "0.2.0"
+  log_level: "INFO"                # INFO bij levering; DEBUG alleen voor validatie
+  log_tag: "pompput"
+  # ESPHome schrijft gewijzigde instellingen binnen 0,5 s naar flash, zodat een stroomonderbreking
+  # vlak na een wijziging niets kwijtmaakt (FR-024). Alleen gewijzigde waarden worden geschreven.
+  flash_write_interval: "500ms"
+
+  # ---- Pinnen (contracts/hardware.md) ----
+  pin_acs712: "GPIO3"              # D1/A1, ADC1; ACS712 OUT via deler 10k/10k
+  pin_trig: "GPIO4"                # D2; HC-SR04 TRIG, rechtstreeks
+  pin_echo: "GPIO5"                # D3; HC-SR04 ECHO via deler 1k/2k
+  pin_led: "GPIO6"                 # D4; SK6812 DIN via 330 ohm
+  pin_zoemer: "GPIO7"              # D5; piëzo via 100 ohm
+  pin_knop: "GPIO9"                # D9; BOOT-knop (strapping-pin, alleen ingang)
+
+  # ---- Niveau (data-model §1-§3, research R6) ----
+  ping_interval: "250ms"           # vier metingen per seconde
+  ultrasoon_timeout: "4.2m"        # wachten op een echo tot 4,2 m; interrupt-gestuurd
+  m_naar_cm: "100.0"
+  mediaan_venster: "5"             # mediaan over de laatste 5 metingen (FR-004)
+  mediaan_min_geldig: "3"          # ... alleen als er minstens 3 geldig zijn
+  min_afstand_cm: "3.0"            # korter is onmogelijk (FR-005)
+  bereik_extra_cm: "20.0"          # verder dan afstand_leeg_cm + 20 is onmogelijk (FR-005)
+  max_niveausnelheid_cm_s: "2.0"   # sneller stijgen of dalen is onmogelijk (FR-005)
+  snelheid_dt_max_s: "5.0"         # de snelheidscontrole telt hoogstens 5 s ...
+  snelheid_min_tolerantie_cm: "3.0"  # ... en staat altijd 3 cm toe
+  inleer_aantal: "5"               # inleren: 5 medianen achter elkaar ...
+  inleer_spreiding_cm: "2.0"       # ... binnen 2 cm van elkaar
+  niveau_verouderd_ms: "30000"     # zonder geaccepteerde mediaan "onbekend" na 30 s (FR-003)
+  publicatie_interval: "10s"       # waterhoogte, vulgraad en diagnose elke 10 s naar HA
+
+  # ---- Pomp (data-model §4, research R7) ----
+  adc_interval: "100ms"
+  adc_demping: "12db"              # 0 tot ongeveer 2,5 V op de ESP32-C3; 11db is verouderd
+  stroom_venster: "100ms"          # ct_clamp: 5 perioden van 50 Hz per meting
+  stroom_interval: "500ms"
+  offset_venster: "10"             # gemiddelde van 10 ADC-waarden = de DC-offset
+  offset_elke: "5"
+  acs712_a_per_v: "30.303"         # 1 / (0,066 V/A x 0,5): 30 A-variant, deler 10k/10k
+  pomp_debounce_ms: "2000"         # 2 s aaneengesloten voor een start of stop (FR-011)
+  pomp_uit_factor: "0.7"           # uit onder 70 % van de drempel (hysterese)
+  offset_min_v: "0.9"              # offset buiten 0,9-1,6 V = onmogelijke waarde (FR-016)
+  offset_max_v: "1.6"
+  offset_storing_ms: "10000"       # storing na 10 s, herstel na 10 s
+
+  # ---- Meldingen (data-model §5) ----
+  verwerking_interval: "1s"        # niveau en meldingen elke seconde
+  start_niet_herstel_cm: "2.0"     # herstelmarge van "pomp start niet"
+  geometrie_min_verschil_cm: "10.0"  # afstand_leeg_cm >= afstand_vol_cm + 10
+  herstart_melden_na: "3s"         # gebeurtenis "herstart" 3 s na de eerste verbinding
+  opstarten_max: "10s"             # witte led hoogstens 10 s
+  diagnose_interval: "60s"
+
+  # ---- Instellingen: bereik, stap en standaardwaarde (data-model §1) ----
+  afstand_leeg_cm_min: "10"
+  afstand_leeg_cm_max: "400"
+  afstand_leeg_cm_stap: "0.1"
+  afstand_vol_cm_min: "3"
+  afstand_vol_cm_max: "390"
+  afstand_vol_cm_stap: "0.1"
+  inschakelniveau_cm_min: "0"
+  inschakelniveau_cm_max: "400"
+  inschakelniveau_cm_stap: "0.1"
+  alarmdrempel_pct_min: "10"
+  alarmdrempel_pct_max: "120"
+  alarmdrempel_pct_stap: "1"
+  alarmdrempel_pct_std: "80"
+  hoogwater_wachttijd_s_min: "0"
+  hoogwater_wachttijd_s_max: "600"
+  hoogwater_wachttijd_s_stap: "1"
+  hoogwater_wachttijd_s_std: "30"
+  start_marge_cm_min: "0"
+  start_marge_cm_max: "50"
+  start_marge_cm_stap: "1"
+  start_marge_cm_std: "5"
+  start_wachttijd_s_min: "10"
+  start_wachttijd_s_max: "3600"
+  start_wachttijd_s_stap: "1"
+  start_wachttijd_s_std: "120"
+  afpomp_controletijd_s_min: "30"
+  afpomp_controletijd_s_max: "3600"
+  afpomp_controletijd_s_stap: "1"
+  afpomp_controletijd_s_std: "180"
+  afpomp_min_daling_cm_min: "0.5"
+  afpomp_min_daling_cm_max: "50"
+  afpomp_min_daling_cm_stap: "0.1"
+  afpomp_min_daling_cm_std: "2"
+  max_looptijd_min_min: "1"
+  max_looptijd_min_max: "240"
+  max_looptijd_min_stap: "1"
+  max_looptijd_min_std: "10"
+  sensorstoring_wachttijd_s_min: "30"
+  sensorstoring_wachttijd_s_max: "3600"
+  sensorstoring_wachttijd_s_stap: "1"
+  sensorstoring_wachttijd_s_std: "300"
+  herstelmarge_pct_min: "1"
+  herstelmarge_pct_max: "50"
+  herstelmarge_pct_stap: "1"
+  herstelmarge_pct_std: "5"
+  pomp_stroomdrempel_a_min: "0.05"
+  pomp_stroomdrempel_a_max: "20"
+  pomp_stroomdrempel_a_stap: "0.05"
+  pomp_stroomdrempel_a_std: "0.5"
+  led_helderheid_pct_min: "0"
+  led_helderheid_pct_max: "100"
+  led_helderheid_pct_stap: "1"
+  led_helderheid_pct_std: "30"
+
+  # ---- Signalering (contracts/lokale-signalering.md) ----
+  led_aantal: "1"
+  led_kleurvolgorde: "GRBW"        # SK6812 RGBW; op de bank controleren (research R9)
+  # Lineair: de kleuren uit het contract (bijvoorbeeld oranje 255,80,0) en de helderheid komen
+  # zo op de led. Met de standaard-gamma van 2,8 zou oranje vrijwel rood worden.
+  led_gamma: "1.0"
+  led_min_helderheid_alarm: "0.10" # een alarm is nooit onzichtbaar (FR-028)
+  knop_debounce: "50ms"
+  # Kleuren als fractie (0-1) per kanaal R, G, B, W.
+  led_rood_r: "1.0"
+  led_rood_g: "0.0"
+  led_rood_b: "0.0"
+  led_rood_w: "0.0"
+  led_oranje_r: "1.0"
+  led_oranje_g: "0.314"            # 80/255
+  led_oranje_b: "0.0"
+  led_oranje_w: "0.0"
+  led_paars_r: "0.627"             # 160/255
+  led_paars_g: "0.0"
+  led_paars_b: "1.0"
+  led_paars_w: "0.0"
+  led_wit_r: "0.0"
+  led_wit_g: "0.0"
+  led_wit_b: "0.0"
+  led_wit_w: "1.0"
+  led_blauw_r: "0.0"
+  led_blauw_g: "0.0"
+  led_blauw_b: "1.0"
+  led_blauw_w: "0.0"
+  led_groen_r: "0.0"
+  led_groen_g: "1.0"
+  led_groen_b: "0.0"
+  led_groen_w: "0.0"
+  # Ritmes in ms. Een continu patroon heeft _uit_ms 0.
+  led_alarm_aan_ms: "125"
+  led_alarm_uit_ms: "125"
+  led_waarschuwing_aan_ms: "500"
+  led_waarschuwing_uit_ms: "500"
+  led_storing_aan_ms: "500"
+  led_storing_uit_ms: "1500"
+  led_opstarten_uit_ms: "0"
+  led_geen_verbinding_aan_ms: "100"
+  led_geen_verbinding_uit_ms: "1900"
+  led_pomp_uit_ms: "0"
+  led_normaal_aan_ms: "100"
+  led_normaal_uit_ms: "4900"
+  led_bevestiging_aantal: "2"
+  led_bevestiging_aan_ms: "100"
+  led_bevestiging_uit_ms: "100"
+  # Zoemer: passieve piëzo, blokgolf van 2,7 kHz met 50 % duty.
+  zoemer_frequentie: "2700Hz"
+  zoemer_niveau: "50%"
+  zoemer_alarm_aantal: "3"
+  zoemer_alarm_aan_ms: "150"
+  zoemer_alarm_uit_ms: "150"
+  zoemer_alarm_periode_ms: "10000"
+  zoemer_waarschuwing_aantal: "1"
+  zoemer_waarschuwing_aan_ms: "300"
+  zoemer_waarschuwing_uit_ms: "0"
+  zoemer_waarschuwing_periode_ms: "60000"
+  zoemer_storing_aantal: "2"
+  zoemer_storing_aan_ms: "100"
+  zoemer_storing_uit_ms: "100"
+  zoemer_hersteld_aantal: "1"
+  zoemer_hersteld_aan_ms: "50"
+  zoemer_hersteld_uit_ms: "0"
+  zoemer_bevestiging_aantal: "1"
+  zoemer_bevestiging_aan_ms: "50"
+  zoemer_bevestiging_uit_ms: "0"
+  zoemer_opstarten_aantal: "1"
+  zoemer_opstarten_aan_ms: "100"
+  zoemer_opstarten_uit_ms: "0"
+  zoemer_pauze_ms: "150"           # pauze na een eenmalig patroon
+
+  # ---- Codes (benoemde toestanden; constitutie II en V) ----
+  # Niveaustatus (data-model §3).
+  niveau_onbekend: "0"
+  niveau_geldig: "1"
+  niveau_verouderd: "2"
+  niveau_storing: "3"
+  # Pompstatus (data-model §4).
+  pomp_onbekend: "0"
+  pomp_stil: "1"
+  pomp_start_kandidaat: "2"
+  pomp_draait: "3"
+  pomp_stop_kandidaat: "4"
+  # Fase van een melding (data-model §5).
+  fase_inactief: "0"
+  fase_in_afwachting: "1"
+  fase_actief: "2"
+  # Meldingsnummer: de volgorde van data-model §5, ook het bitnummer in g_actieve_set.
+  idx_hoogwater: "0"
+  idx_pomp_start_niet: "1"
+  idx_pomp_pompt_niet_af: "2"
+  idx_pomp_draait_te_lang: "3"
+  idx_niveausensor_storing: "4"
+  idx_stroomsensor_storing: "5"
+  idx_niet_ingesteld: "6"
+  aantal_meldingen: "7"
+  # Bitgroepen in g_actieve_set.
+  bits_alarm: "0x01"               # bit 0
+  bits_waarschuwing: "0x0E"        # bits 1-3
+  bits_storing: "0x70"             # bits 4-6
+  # Zoemermodus.
+  zoemer_modus_stil: "0"
+  zoemer_modus_alarm: "1"
+  zoemer_modus_waarschuwing: "2"
+  # Ledpatroon, in volgorde van prioriteit (contracts/lokale-signalering.md).
+  led_patroon_geen: "0"            # dwingt een nieuwe keuze af
+  led_patroon_alarm: "1"
+  led_patroon_waarschuwing: "2"
+  led_patroon_storing: "3"
+  led_patroon_opstarten: "4"
+  led_patroon_geen_verbinding: "5"
+  led_patroon_pomp: "6"
+  led_patroon_normaal: "7"
+
+  # ---- Omrekening ----
+  ms_per_s: "1000"
+  ms_per_min: "60000"
+  pct_schaal: "100.0"
+
+  # ---- Gedeelde uitdrukkingen (één definitie, constitutie IV) ----
+  # De pomp draait: DRAAIT of STOP_KANDIDAAT (data-model §4).
+  pomp_draait_nu: "(id(g_pomp_status) == ${pomp_draait} || id(g_pomp_status) == ${pomp_stop_kandidaat})"
+  # De pomp staat stil: STIL of START_KANDIDAAT.
+  pomp_staat_stil: "(id(g_pomp_status) == ${pomp_stil} || id(g_pomp_status) == ${pomp_start_kandidaat})"
+  # Het niveau is bruikbaar voor een beslissing: GELDIG en een waterhoogte.
+  niveau_bruikbaar: "(id(g_niveau_status) == ${niveau_geldig} && !std::isnan(id(g_hoogte_cm)))"
+
+# ---------------------------------------------------------------------------------------------
+# ---- 2. Basis ----
+# ---------------------------------------------------------------------------------------------
+esphome:
+  name: ${device_name}
+  friendly_name: ${friendly_name}
+  min_version: 2026.10.1
+  project:
+    name: diy.pompput
+    version: ${project_version}
+  # FR-025, FR-027, FR-028; contracts/hardware.md "Veilige begintoestand"
+  # De led staat al uit (restore_mode ALWAYS_OFF), de zoemer-output begint uit en TRIG is laag:
+  # dat regelen de componenten zelf, vóór deze opstartvolgorde. Priority -100: alle componenten
+  # zijn dan opgezet, dus ook de bewaarde instellingen en de led.
+  on_boot:
+    priority: -100
+    then:
+      # 1. "Ingesteld" uit de bewaarde instellingen (FR-024).
+      - script.execute: ingesteld_bepalen
+      # 2. De vijf instellingen met regels publiceren hun waarde, of "onbekend" (FR-023).
+      - component.update: afstand_leeg_cm
+      - component.update: afstand_vol_cm
+      - component.update: inschakelniveau_cm
+      - component.update: alarmdrempel_pct
+      - component.update: herstelmarge_pct
+      # 3. Beginwaarden: status normaal en geen enkele melding actief. De eerste beoordeling
+      #    (binnen 1 s) zet ze goed. Zo is Status nooit "onbekend" terwijl het apparaat draait,
+      #    waar "Pompput onbereikbaar" in HA op let (FR-017).
+      - text_sensor.template.publish:
+          id: status
+          state: "normaal"
+      - lambda: |-
+          for (auto *melding : {id(hoogwater), id(pomp_start_niet), id(pomp_pompt_niet_af),
+                                id(pomp_draait_te_lang), id(niveausensor_storing),
+                                id(stroomsensor_storing), id(niet_ingesteld)}) {
+            melding->publish_state(false);
+          }
+      # 4. De opstartpiep, ook als de zoemer uit staat (lokale signalering).
+      - script.execute:
+          id: zoemer_eenmalig
+          aantal: ${zoemer_opstarten_aantal}
+          aan_ms: ${zoemer_opstarten_aan_ms}
+          uit_ms: ${zoemer_opstarten_uit_ms}
+          altijd: true
+      # 5. Wit: opstarten, tot de eerste geldige niveaumeting en hoogstens opstarten_max.
+      - script.execute: led_patroon_kiezen
+      - delay: ${opstarten_max}
+      - globals.set:
+          id: g_opstarten
+          value: 'false'
+      - script.execute: led_patroon_kiezen
+
+esp32:
+  variant: esp32c3
+  framework:
+    type: esp-idf
+  # De taak-watchdog blijft op de standaard van 5 s en wordt nooit uitgezet (constitutie III).
+
+# FR-024
+preferences:
+  flash_write_interval: ${flash_write_interval}
+
+logger:
+  level: ${log_level}
+
+# Geen web_server, captive_portal of mqtt (constitutie V).
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  # 0 s: netwerkverlies mag het apparaat nooit herstarten, zodat een actief alarm en de lokale
+  # signalering blijven (constitutie, Independent operation).
+  reboot_timeout: 0s
+
+# FR-018, FR-026, FR-027
+api:
+  encryption:
+    key: !secret api_encryption_key
+  # 0 s: zonder Home Assistant blijft het apparaat meten en signaleren.
+  reboot_timeout: 0s
+  on_client_connected:
+    - globals.set:
+        id: g_verbonden
+        value: 'true'
+    - script.execute: led_patroon_kiezen
+    # Eenmalig na het opstarten: de gebeurtenis "herstart", 3 s na de verbinding, zodat HA dan
+    # geabonneerd is (FR-026).
+    - if:
+        condition:
+          and:
+            - lambda: 'return !id(g_herstart_gemeld);'
+            - not:
+                script.is_running: herstart_melden
+        then:
+          - script.execute: herstart_melden
+  on_client_disconnected:
+    # Deze trigger komt nadat de client is verwijderd; de conditie ziet dus alleen de clients
+    # die over zijn (zoals in de Buitenlamp, research R3).
+    - if:
+        condition:
+          not:
+            api.connected:
+              state_subscription_only: true
+        then:
+          - globals.set:
+              id: g_verbonden
+              value: 'false'
+    - script.execute: led_patroon_kiezen
+
+ota:
+  - platform: esphome
+    # Geen eigen sleutel: OTA gebruikt de API-sleutel uit secrets.yaml (research R3).
+    encryption:
+
+# Diagnose: herstartreden (sectie 8).
+debug:
+
+packages:
+  # -------------------------------------------------------------------------------------------
+  # ---- 3. Niveau ----
+  # -------------------------------------------------------------------------------------------
+  # FR-001 t/m FR-005, FR-016; data-model §2-§3, research R6
+  niveau:
+    globals:
+      # De laatste ruwe metingen in cm (NAN = geen echo). '{}' is 0 cm, en dat is ongeldig
+      # (korter dan min_afstand_cm), dus een lege plek telt niet mee.
+      - id: g_pings
+        type: std::array<float, ${mediaan_venster}>
+        restore_value: false
+        initial_value: 'std::array<float, ${mediaan_venster}>{}'
+      - id: g_ping_index
+        type: uint8_t
+        restore_value: false
+        initial_value: '0'
+      - id: g_ping_aantal
+        type: uint8_t
+        restore_value: false
+        initial_value: '0'
+      - id: g_nieuwe_pings
+        type: uint8_t
+        restore_value: false
+        initial_value: '0'
+      # De niveaustatus (data-model §3), en of er een referentie is (ingeleerd).
+      - id: g_niveau_status
+        type: uint8_t
+        restore_value: false
+        initial_value: '${niveau_onbekend}'
+      - id: g_heeft_referentie
+        type: bool
+        restore_value: false
+        initial_value: 'false'
+      # De laatst geaccepteerde mediaan en wanneer.
+      - id: g_geaccepteerd_cm
+        type: float
+        restore_value: false
+        initial_value: 'NAN'
+      - id: g_geaccepteerd_ms
+        type: uint32_t
+        restore_value: false
+        initial_value: '0'
+      # Waar als in deze ronde een mediaan is geaccepteerd.
+      - id: g_niveau_geaccepteerd
+        type: bool
+        restore_value: false
+        initial_value: 'false'
+      # De klok voor STORING zonder referentie: loopt vanaf de start of een reset.
+      - id: g_klok_gestart
+        type: bool
+        restore_value: false
+        initial_value: 'false'
+      - id: g_onbekend_sinds_ms
+        type: uint32_t
+        restore_value: false
+        initial_value: '0'
+      # De inleerreeks: de laatste medianen.
+      - id: g_inleer
+        type: std::array<float, ${inleer_aantal}>
+        restore_value: false
+        initial_value: 'std::array<float, ${inleer_aantal}>{}'
+      - id: g_inleer_aantal
+        type: uint8_t
+        restore_value: false
+        initial_value: '0'
+      - id: g_inleer_index
+        type: uint8_t
+        restore_value: false
+        initial_value: '0'
+      - id: g_mediaan_cm
+        type: float
+        restore_value: false
+        initial_value: 'NAN'
+      - id: g_vulgraad_pct
+        type: float
+        restore_value: false
+        initial_value: 'NAN'
+
+    sensor:
+      # FR-001
+      # Van bovenaf, zonder contact met het water. De component start de puls en meet de echo met
+      # een interrupt, dus de timeout kost geen lustijd (research R6).
+      - platform: ultrasonic
+        id: niveau_ping
+        name: "Niveau ping"
+        internal: true
+        trigger_pin: ${pin_trig}
+        echo_pin: ${pin_echo}
+        update_interval: ${ping_interval}
+        timeout: ${ultrasoon_timeout}
+        # Ruwe waarde in meters, of NAN zonder echo.
+        on_raw_value:
+          - lambda: |-
+              id(g_pings)[id(g_ping_index)] = x * ${m_naar_cm};
+              if (++id(g_ping_index) >= ${mediaan_venster}) id(g_ping_index) = 0;
+              if (id(g_ping_aantal) < ${mediaan_venster}) id(g_ping_aantal)++;
+              id(g_nieuwe_pings)++;
+
+      # FR-002, FR-003
+      # NAN (= "onbekend" in HA) als de niveaustatus niet GELDIG is of het apparaat niet is
+      # ingesteld. Elke 10 s gepubliceerd, en direct bij een statuswijziging.
+      - platform: template
+        id: waterhoogte
+        name: "Waterhoogte"
+        unit_of_measurement: cm
+        device_class: distance
+        state_class: measurement
+        accuracy_decimals: 1
+        update_interval: never
+        lambda: 'return id(g_hoogte_cm);'
+      - platform: template
+        id: vulgraad
+        name: "Vulgraad"
+        unit_of_measurement: "%"
+        state_class: measurement
+        accuracy_decimals: 0
+        update_interval: never
+        lambda: 'return id(g_vulgraad_pct);'
+      # FR-026; voor de kalibratie (quickstart §5). Werkt ook zonder instellingen.
+      - platform: template
+        id: afstand_ruw
+        name: "Afstand (ruw)"
+        unit_of_measurement: cm
+        device_class: distance
+        state_class: measurement
+        entity_category: diagnostic
+        accuracy_decimals: 1
+        update_interval: never
+        lambda: 'return id(g_mediaan_cm);'
+
+    script:
+      # FR-003, FR-004, FR-005, FR-016, FR-022; data-model §2-§3, research R6
+      # Elke seconde: de mediaan, accepteren of verwerpen, en de niveaustatus.
+      - id: niveau_verwerken
+        then:
+          # 1. De mediaan van de geldige metingen (FR-004, FR-005). Geldig: een echo, en
+          #    min_afstand_cm <= afstand <= afstand_leeg_cm + bereik_extra_cm.
+          - lambda: |-
+              const uint32_t now = millis();
+              if (!id(g_klok_gestart)) {
+                id(g_klok_gestart) = true;
+                id(g_onbekend_sinds_ms) = now;
+              }
+              if (id(g_nieuwe_pings) == 0) {
+                id(g_mediaan_cm) = NAN;
+                return;
+              }
+              id(g_nieuwe_pings) = 0;
+              const float leeg = id(g_afstand_leeg_cm);
+              const float max_cm = (std::isnan(leeg) ? ${afstand_leeg_cm_max} : leeg) + ${bereik_extra_cm};
+              // De geldige metingen, meteen gesorteerd ingevoegd (hoogstens mediaan_venster).
+              float geldig[${mediaan_venster}];
+              int n = 0;
+              for (int i = 0; i < id(g_ping_aantal); i++) {
+                const float d = id(g_pings)[i];
+                if (!(d >= ${min_afstand_cm} && d <= max_cm)) continue;  // NAN faalt altijd
+                int j = n++;
+                while (j > 0 && geldig[j - 1] > d) {
+                  geldig[j] = geldig[j - 1];
+                  j--;
+                }
+                geldig[j] = d;
+              }
+              if (n < ${mediaan_min_geldig}) {
+                id(g_mediaan_cm) = NAN;
+                return;
+              }
+              id(g_mediaan_cm) = (n % 2) ? geldig[n / 2] : (geldig[n / 2 - 1] + geldig[n / 2]) / 2;
+          # 2. Accepteren (FR-005; research R6):
+          #    - zonder referentie: inleren, 5 medianen achter elkaar binnen 2 cm;
+          #    - met referentie: de snelheidscontrole |delta| <= max(3 cm, 2 cm/s x dt), dt <= 5 s;
+          #    - in STORING daarnaast opnieuw inleren, zodat de meting zich herstelt als het
+          #      niveau tijdens de storing meer veranderd is dan de snelheidscontrole toelaat.
+          - lambda: |-
+              const uint32_t now = millis();
+              const float m = id(g_mediaan_cm);
+              auto inleren = [&]() -> bool {
+                if (std::isnan(m)) {  // een ronde zonder mediaan breekt de reeks af
+                  id(g_inleer_aantal) = 0;
+                  id(g_inleer_index) = 0;
+                  return false;
+                }
+                id(g_inleer)[id(g_inleer_index)] = m;
+                if (++id(g_inleer_index) >= ${inleer_aantal}) id(g_inleer_index) = 0;
+                if (id(g_inleer_aantal) < ${inleer_aantal}) id(g_inleer_aantal)++;
+                if (id(g_inleer_aantal) < ${inleer_aantal}) return false;
+                const auto grenzen = std::minmax_element(id(g_inleer).begin(), id(g_inleer).end());
+                return *grenzen.second - *grenzen.first <= ${inleer_spreiding_cm};
+              };
+              bool accepteren = false;
+              bool automatisch = false;
+              if (!id(g_heeft_referentie)) {
+                accepteren = inleren();
+              } else {
+                if (!std::isnan(m)) {
+                  const float dt_s = fminf((float) (now - id(g_geaccepteerd_ms)) / ${ms_per_s},
+                                           ${snelheid_dt_max_s});
+                  accepteren = fabsf(m - id(g_geaccepteerd_cm)) <=
+                               fmaxf(${snelheid_min_tolerantie_cm}, ${max_niveausnelheid_cm_s} * dt_s);
+                }
+                if (!accepteren && id(g_niveau_status) == ${niveau_storing}) {
+                  accepteren = automatisch = inleren();
+                }
+              }
+              id(g_niveau_geaccepteerd) = accepteren;
+              if (accepteren) {
+                id(g_heeft_referentie) = true;
+                id(g_inleer_aantal) = 0;
+                id(g_inleer_index) = 0;
+                id(g_geaccepteerd_cm) = m;
+                id(g_geaccepteerd_ms) = now;
+              }
+              if (automatisch) {
+                id(gebeurtenis_melden).execute(std::string("niveaumeting_herstart"),
+                                               std::string("oorzaak automatisch"));
+              }
+          # 3. De tijdsgrenzen (FR-003, FR-016), de afgeleide waarden (FR-002), en publiceren bij
+          #    een statuswijziging. Alleen bij GELDIG en ingesteld een waterhoogte en vulgraad.
+          - lambda: |-
+              const uint32_t now = millis();
+              const uint32_t storing_ms =
+                  (uint32_t) (id(sensorstoring_wachttijd_s).state * ${ms_per_s});
+              const uint8_t oud = id(g_niveau_status);
+              uint8_t nieuw = oud;
+              if (id(g_niveau_geaccepteerd)) {
+                nieuw = ${niveau_geldig};
+              } else if (id(g_heeft_referentie)) {
+                const uint32_t leeftijd = now - id(g_geaccepteerd_ms);
+                if (leeftijd >= storing_ms) nieuw = ${niveau_storing};
+                else if (leeftijd >= ${niveau_verouderd_ms}) nieuw = ${niveau_verouderd};
+              } else if ((uint32_t) (now - id(g_onbekend_sinds_ms)) >= storing_ms) {
+                nieuw = ${niveau_storing};  // sinds de start of reset nog geen geldige waarde
+              }
+              const bool bruikbaar = nieuw == ${niveau_geldig} && id(g_ingesteld);
+              id(g_hoogte_cm) = bruikbaar ? id(g_afstand_leeg_cm) - id(g_geaccepteerd_cm) : NAN;
+              id(g_vulgraad_pct) = bruikbaar ? id(g_hoogte_cm) /
+                                                   (id(g_afstand_leeg_cm) - id(g_afstand_vol_cm)) *
+                                                   ${pct_schaal}
+                                             : NAN;
+              id(g_niveau_status) = nieuw;
+              if (nieuw != oud) {
+                static const char *const namen[] = {"onbekend", "geldig", "verouderd", "storing"};
+                ESP_LOGI("${log_tag}", "niveau %s -> %s", namen[oud], namen[nieuw]);
+                id(waterhoogte).update();
+                id(vulgraad).update();
+                if (nieuw == ${niveau_geldig} && id(g_opstarten)) {
+                  id(g_opstarten) = false;  // de eerste geldige meting: einde van "opstarten"
+                  id(led_patroon_kiezen).execute();
+                }
+              }
+
+      # FR-026; research R6
+      # Zet de niveaumeting terug naar ONBEKEND; daarna wordt opnieuw ingeleerd. Na de knop, en na
+      # een gewijzigde afstand leeg of vol (data-model §1).
+      - id: niveaumeting_herstarten
+        parameters:
+          oorzaak: string
+        then:
+          - lambda: |-
+              id(g_pings) = {};
+              id(g_ping_index) = 0;
+              id(g_ping_aantal) = 0;
+              id(g_nieuwe_pings) = 0;
+              id(g_inleer) = {};
+              id(g_inleer_aantal) = 0;
+              id(g_inleer_index) = 0;
+              id(g_niveau_status) = ${niveau_onbekend};
+              id(g_heeft_referentie) = false;
+              id(g_niveau_geaccepteerd) = false;
+              id(g_geaccepteerd_cm) = NAN;
+              id(g_mediaan_cm) = NAN;
+              id(g_klok_gestart) = false;
+              id(g_hoogte_cm) = NAN;
+              id(g_vulgraad_pct) = NAN;
+          - component.update: waterhoogte
+          - component.update: vulgraad
+          - component.update: afstand_ruw
+          - script.execute:
+              id: gebeurtenis_melden
+              type: "niveaumeting_herstart"
+              detail: !lambda 'return "oorzaak " + oorzaak;'
+
+    # FR-026
+    button:
+      - platform: template
+        id: niveaumeting_herstart
+        name: "Niveaumeting opnieuw starten"
+        entity_category: config
+        on_press:
+          - script.execute:
+              id: niveaumeting_herstarten
+              oorzaak: "knop"
+
+    # FR-003
+    interval:
+      - interval: ${publicatie_interval}
+        then:
+          - component.update: waterhoogte
+          - component.update: vulgraad
+          - component.update: afstand_ruw
+
+  # -------------------------------------------------------------------------------------------
+  # ---- 4. Pomp ----
+  # -------------------------------------------------------------------------------------------
+  # FR-006 t/m FR-009, FR-011, FR-016; data-model §4, research R7
+  # Alleen meten: de ACS712 zit in de fasedraad, maar het apparaat heeft geen uitgang naar de
+  # pomp (FR-007).
+  pomp:
+    globals:
+      # De DC-offset van de ACS712 (rust ongeveer 1,25 V op de pin) en of die mogelijk is.
+      - id: g_offset_v
+        type: float
+        restore_value: false
+        initial_value: 'NAN'
+      - id: g_offset_ok
+        type: bool
+        restore_value: false
+        initial_value: 'true'
+      # De lopende pompcyclus (data-model §4).
+      - id: g_pomp_start_ms
+        type: uint32_t
+        restore_value: false
+        initial_value: '0'
+      - id: g_pomp_stop_kandidaat_ms
+        type: uint32_t
+        restore_value: false
+        initial_value: '0'
+      - id: g_niveau_start_cm
+        type: float
+        restore_value: false
+        initial_value: 'NAN'
+      # NAN tot de eerste stop; wordt alleen bij een stop gepubliceerd.
+      - id: g_looptijd_s
+        type: float
+        restore_value: false
+        initial_value: 'NAN'
+      - id: g_stroom_a
+        type: float
+        restore_value: false
+        initial_value: 'NAN'
+
+    sensor:
+      # FR-006, FR-016
+      # Eén ADC op A1 met twee rollen: bron voor ct_clamp (die leest de pin zelf, zonder deze
+      # filters), en het gemiddelde hier is de DC-offset voor de storingscontrole.
+      - platform: adc
+        id: acs712_spanning
+        name: "ACS712 spanning"
+        internal: true
+        pin: ${pin_acs712}
+        attenuation: ${adc_demping}
+        update_interval: ${adc_interval}
+        filters:
+          - sliding_window_moving_average:
+              window_size: ${offset_venster}
+              send_every: ${offset_elke}
+        on_value:
+          - lambda: |-
+              id(g_offset_v) = x;
+              id(g_offset_ok) = x >= ${offset_min_v} && x <= ${offset_max_v};
+      # FR-006
+      # RMS van het AC-deel over 100 ms, elke 500 ms, omgerekend naar ampère. Meet in de lus,
+      # zonder te blokkeren (research R7).
+      - platform: ct_clamp
+        id: pompstroom_rms
+        name: "Pompstroom RMS"
+        internal: true
+        sensor: acs712_spanning
+        sample_duration: ${stroom_venster}
+        update_interval: ${stroom_interval}
+        filters:
+          - multiply: ${acs712_a_per_v}
+        on_value:
+          - script.execute: pomp_bijwerken
+      # FR-009
+      - platform: template
+        id: looptijd_laatste_pompbeurt
+        name: "Looptijd laatste pompbeurt"
+        unit_of_measurement: s
+        device_class: duration
+        accuracy_decimals: 0
+      # Diagnose: om de drempel af te stellen (quickstart §5 stap 5).
+      - platform: template
+        id: pompstroom
+        name: "Pompstroom"
+        unit_of_measurement: A
+        device_class: current
+        state_class: measurement
+        entity_category: diagnostic
+        accuracy_decimals: 2
+        update_interval: never
+        lambda: 'return id(g_stroom_a);'
+      # FR-016; bankverificatie (ongeveer 1,25 V in rust)
+      - platform: template
+        id: offset_stroomsensor
+        name: "Offset stroomsensor"
+        unit_of_measurement: V
+        device_class: voltage
+        state_class: measurement
+        entity_category: diagnostic
+        accuracy_decimals: 2
+        update_interval: never
+        lambda: 'return id(g_offset_v);'
+
+    # FR-008
+    # Aan = draait, uit = stil, onbekend bij een onmogelijke stroommeting.
+    binary_sensor:
+      - platform: template
+        id: pomp
+        name: "Pomp"
+        device_class: running
+
+    script:
+      # FR-006, FR-009, FR-011; data-model §4
+      # De pompstatus bij elke stroomwaarde: STIL -> START_KANDIDAAT -> DRAAIT ->
+      # STOP_KANDIDAAT -> STIL, met 2 s debounce en uit-hysterese op 70 % van de drempel.
+      - id: pomp_bijwerken
+        then:
+          - lambda: |-
+              const float stroom = id(pompstroom_rms).state;
+              if (std::isnan(stroom)) return;
+              const uint32_t now = millis();
+              const uint8_t oud = id(g_pomp_status);
+              uint8_t nieuw = oud;
+              if (!id(g_offset_ok)) {
+                nieuw = ${pomp_onbekend};  // onmogelijke meting; geen gebeurtenis
+                id(g_stroom_a) = NAN;
+              } else {
+                id(g_stroom_a) = stroom;
+                const float aan = id(pomp_stroomdrempel_a).state;
+                const float uit = aan * ${pomp_uit_factor};
+                switch (oud) {
+                  case ${pomp_onbekend}:
+                  case ${pomp_stil}:
+                    if (stroom >= aan) {
+                      nieuw = ${pomp_start_kandidaat};
+                      id(g_pomp_start_ms) = now;  // het eerste venster boven de drempel
+                      id(g_niveau_start_cm) = id(g_hoogte_cm);
+                    } else {
+                      nieuw = ${pomp_stil};
+                    }
+                    break;
+                  case ${pomp_start_kandidaat}:
+                    if (stroom < uit) {
+                      nieuw = ${pomp_stil};  // korte piek: geen start (FR-011)
+                    } else if ((uint32_t) (now - id(g_pomp_start_ms)) >= ${pomp_debounce_ms}) {
+                      nieuw = ${pomp_draait};
+                      const float start_cm = id(g_niveau_start_cm);
+                      id(gebeurtenis_melden).execute(
+                          std::string("pomp_start"),
+                          std::isnan(start_cm) ? std::string("niveau onbekend")
+                                               : str_sprintf("niveau %.1f cm", start_cm));
+                    }
+                    break;
+                  case ${pomp_draait}:
+                    if (stroom < uit) {
+                      nieuw = ${pomp_stop_kandidaat};
+                      id(g_pomp_stop_kandidaat_ms) = now;
+                    }
+                    break;
+                  default:  // STOP_KANDIDAAT
+                    if (stroom >= uit) {
+                      nieuw = ${pomp_draait};  // korte dip: de pomp draait door
+                    } else if ((uint32_t) (now - id(g_pomp_stop_kandidaat_ms)) >= ${pomp_debounce_ms}) {
+                      nieuw = ${pomp_stil};
+                      id(g_looptijd_s) = roundf(
+                          (float) (id(g_pomp_stop_kandidaat_ms) - id(g_pomp_start_ms)) / ${ms_per_s});
+                      id(looptijd_laatste_pompbeurt).publish_state(id(g_looptijd_s));
+                      const float hoogte = id(g_hoogte_cm);
+                      id(gebeurtenis_melden).execute(
+                          std::string("pomp_stop"),
+                          std::isnan(hoogte)
+                              ? str_sprintf("looptijd %.0f s, niveau onbekend", id(g_looptijd_s))
+                              : str_sprintf("looptijd %.0f s, niveau %.1f cm", id(g_looptijd_s), hoogte));
+                    }
+                    break;
+                }
+              }
+              id(g_pomp_status) = nieuw;
+              // De zichtbare toestand (draait, stil of onbekend) direct naar HA en de led.
+              auto zichtbaar = [](uint8_t status) -> uint8_t {
+                if (status == ${pomp_onbekend}) return ${pomp_onbekend};
+                return (status == ${pomp_draait} || status == ${pomp_stop_kandidaat}) ? ${pomp_draait}
+                                                                                      : ${pomp_stil};
+              };
+              if (zichtbaar(nieuw) != zichtbaar(oud)) {
+                if (nieuw == ${pomp_onbekend}) {
+                  id(pomp).invalidate_state();
+                } else {
+                  id(pomp).publish_state(zichtbaar(nieuw) == ${pomp_draait});
+                }
+                id(pompstroom).update();
+                id(led_patroon_kiezen).execute();
+              }
+
+    # Diagnose elke 10 s naar HA.
+    interval:
+      - interval: ${publicatie_interval}
+        then:
+          - component.update: pompstroom
+          - component.update: offset_stroomsensor
+
+  # -------------------------------------------------------------------------------------------
+  # ---- 5. Meldingen ----
+  # -------------------------------------------------------------------------------------------
+  meldingen:
+    globals:
+      # De toestand per melding, geïndexeerd met het meldingsnummer. Niet bewaard: na een
+      # herstart begint elke melding INACTIEF en wordt hij opnieuw beoordeeld (data-model §5).
+      # '{}' zet alles op 0, dus fase ${fase_inactief}.
+      - id: g_melding_fase
+        type: std::array<uint8_t, ${aantal_meldingen}>
+        restore_value: false
+        initial_value: 'std::array<uint8_t, ${aantal_meldingen}>{}'
+      - id: g_melding_sinds_ms
+        type: std::array<uint32_t, ${aantal_meldingen}>
+        restore_value: false
+        initial_value: 'std::array<uint32_t, ${aantal_meldingen}>{}'
+      - id: g_melding_herstel_bezig
+        type: std::array<bool, ${aantal_meldingen}>
+        restore_value: false
+        initial_value: 'std::array<bool, ${aantal_meldingen}>{}'
+      - id: g_melding_herstel_sinds_ms
+        type: std::array<uint32_t, ${aantal_meldingen}>
+        restore_value: false
+        initial_value: 'std::array<uint32_t, ${aantal_meldingen}>{}'
+      # De actieve meldingen als bitmasker (bit = meldingsnummer).
+      - id: g_actieve_set
+        type: uint8_t
+        restore_value: false
+        initial_value: '0'
+      # Waterhoogte en pompstatus, hier al gedeclareerd omdat melding_stap ze in de tekst van
+      # een melding gebruikt; sectie 3 en 4 vullen ze.
+      - id: g_hoogte_cm
+        type: float
+        restore_value: false
+        initial_value: 'NAN'
+      - id: g_pomp_status
+        type: uint8_t
+        restore_value: false
+        initial_value: '${pomp_onbekend}'
+
+    # FR-012 t/m FR-016, FR-018, randgeval "niet ingesteld"
+    # Eén binary sensor per melding; HA maakt er via het pakket een alert van.
+    binary_sensor:
+      - platform: template
+        id: hoogwater
+        name: "Hoogwater"
+        device_class: problem
+      - platform: template
+        id: pomp_start_niet
+        name: "Pomp start niet"
+        device_class: problem
+      - platform: template
+        id: pomp_pompt_niet_af
+        name: "Pomp pompt niet af"
+        device_class: problem
+      - platform: template
+        id: pomp_draait_te_lang
+        name: "Pomp draait te lang"
+        device_class: problem
+      - platform: template
+        id: niveausensor_storing
+        name: "Niveausensor storing"
+        device_class: problem
+      - platform: template
+        id: stroomsensor_storing
+        name: "Stroomsensor storing"
+        device_class: problem
+      - platform: template
+        id: niet_ingesteld
+        name: "Niet ingesteld"
+        device_class: problem
+
+    # FR-018
+    text_sensor:
+      - platform: template
+        id: status
+        name: "Status"
+        update_interval: never
+
+    script:
+      # FR-012 t/m FR-016, FR-019, FR-021, FR-022, FR-026; data-model §5
+      # De tekst bij een melding noemt de melding, het niveau en de pomp (FR-019); de alerts in
+      # het HA-pakket voegen de oorzaak in gewone taal en "sinds" toe.
+      # De levenscyclus van één melding: INACTIEF -> IN_AFWACHTING -> ACTIEF -> INACTIEF. Eén
+      # script voor alle zeven, zodat er geen dubbele logica is (research R5). Elk
+      # beoordelingsscript geeft de voorwaarden mee:
+      # - beoordelen: false = vasthouden; een actieve melding blijft staan, een lopende
+      #   wachttijd stopt;
+      # - onderdrukken: true = naar INACTIEF; was hij ACTIEF, dan is dat een herstel.
+      - id: melding_stap
+        parameters:
+          index: int
+          beoordelen: bool
+          activeren: bool
+          herstellen: bool
+          wachttijd_ms: int
+          hersteltijd_ms: int
+          onderdrukken: bool
+        then:
+          - lambda: |-
+              static binary_sensor::BinarySensor *const sensoren[${aantal_meldingen}] = {
+                  id(hoogwater), id(pomp_start_niet), id(pomp_pompt_niet_af),
+                  id(pomp_draait_te_lang), id(niveausensor_storing), id(stroomsensor_storing),
+                  id(niet_ingesteld)};
+              static const char *const namen[${aantal_meldingen}] = {
+                  "hoogwater", "pomp_start_niet", "pomp_pompt_niet_af", "pomp_draait_te_lang",
+                  "niveausensor_storing", "stroomsensor_storing", "niet_ingesteld"};
+              const uint32_t now = millis();
+              auto &fase = id(g_melding_fase)[index];
+              auto &sinds = id(g_melding_sinds_ms)[index];
+              auto &herstel_bezig = id(g_melding_herstel_bezig)[index];
+              auto &herstel_sinds = id(g_melding_herstel_sinds_ms)[index];
+              bool activering = false;
+              bool herstel = false;
+              if (onderdrukken) {
+                herstel = fase == ${fase_actief};
+                fase = ${fase_inactief};
+                herstel_bezig = false;
+              } else if (fase == ${fase_inactief}) {
+                if (beoordelen && activeren) {
+                  sinds = now;
+                  if (wachttijd_ms == 0) {
+                    fase = ${fase_actief};
+                    activering = true;
+                  } else {
+                    fase = ${fase_in_afwachting};
+                  }
+                }
+              } else if (fase == ${fase_in_afwachting}) {
+                if (!beoordelen || !activeren) {
+                  fase = ${fase_inactief};  // geen gebeurtenis: de melding was nog niet actief
+                } else if ((uint32_t) (now - sinds) >= (uint32_t) wachttijd_ms) {
+                  fase = ${fase_actief};
+                  activering = true;
+                }
+              } else if (!beoordelen || !herstellen) {
+                herstel_bezig = false;  // ACTIEF en vasthouden, of de oorzaak is er nog
+              } else {
+                if (!herstel_bezig) {
+                  herstel_bezig = true;
+                  herstel_sinds = now;
+                }
+                if ((uint32_t) (now - herstel_sinds) >= (uint32_t) hersteltijd_ms) {
+                  fase = ${fase_inactief};
+                  herstel_bezig = false;
+                  herstel = true;
+                }
+              }
+              if (activering) {
+                herstel_bezig = false;
+                id(g_actieve_set) |= (1u << index);
+                sensoren[index]->publish_state(true);
+                const float hoogte = id(g_hoogte_cm);
+                const char *pomp = id(g_pomp_status) == ${pomp_onbekend} ? "onbekend"
+                                   : ${pomp_draait_nu}                   ? "draait"
+                                                                         : "stil";
+                id(gebeurtenis_melden).execute(
+                    std::string("melding_actief"),
+                    std::isnan(hoogte)
+                        ? str_sprintf("%s, niveau onbekend, pomp %s", namen[index], pomp)
+                        : str_sprintf("%s, niveau %.1f cm, pomp %s", namen[index], hoogte, pomp));
+              }
+              if (herstel) {
+                id(g_actieve_set) &= (uint8_t) ~(1u << index);
+                sensoren[index]->publish_state(false);
+                id(gebeurtenis_melden).execute(std::string("melding_hersteld"),
+                                               std::string(namen[index]));
+              }
+
+      # Randgeval "niet ingesteld": actief zolang de verplichte instellingen ontbreken of niet
+      # aan de regels voldoen (data-model §1).
+      - id: melding_niet_ingesteld_beoordelen
+        then:
+          - script.execute:
+              id: melding_stap
+              index: ${idx_niet_ingesteld}
+              beoordelen: true
+              activeren: !lambda 'return !id(g_ingesteld);'
+              herstellen: !lambda 'return id(g_ingesteld);'
+              wachttijd_ms: 0
+              hersteltijd_ms: 0
+              onderdrukken: false
+
+      # FR-012, FR-021, FR-022
+      # Hoogwater: de vulgraad boven de alarmdrempel, gedurende de wachttijd. Herstel onder
+      # alarmdrempel - herstelmarge (hysterese). Niet beoordelen bij een niveaustatus anders dan
+      # GELDIG: dan blijft een actief alarm staan (vasthouden, FR-022).
+      - id: melding_hoogwater_beoordelen
+        then:
+          - script.execute:
+              id: melding_stap
+              index: ${idx_hoogwater}
+              beoordelen: !lambda |-
+                return id(g_niveau_status) == ${niveau_geldig} && !std::isnan(id(g_vulgraad_pct));
+              activeren: !lambda 'return id(g_vulgraad_pct) > id(g_alarmdrempel_pct);'
+              herstellen: !lambda |-
+                return id(g_vulgraad_pct) < id(g_alarmdrempel_pct) - id(g_herstelmarge_pct);
+              wachttijd_ms: !lambda 'return (int) (id(hoogwater_wachttijd_s).state * ${ms_per_s});'
+              hersteltijd_ms: 0
+              onderdrukken: !lambda 'return !id(g_ingesteld);'
+
+      # FR-016
+      # Storing van de niveausensor: de niveaustatus is STORING. Zonder instellingen wordt hij
+      # niet nieuw geactiveerd (data-model §5).
+      - id: melding_niveausensor_storing_beoordelen
+        then:
+          - script.execute:
+              id: melding_stap
+              index: ${idx_niveausensor_storing}
+              beoordelen: !lambda 'return id(g_ingesteld);'
+              activeren: !lambda 'return id(g_niveau_status) == ${niveau_storing};'
+              herstellen: !lambda 'return id(g_niveau_status) == ${niveau_geldig};'
+              wachttijd_ms: 0
+              hersteltijd_ms: 0
+              onderdrukken: false
+
+      # FR-016
+      # Storing van de stroomsensor: de offset 10 s buiten 0,9-1,6 V; herstel na 10 s binnen het
+      # bereik. Wordt ook zonder instellingen beoordeeld.
+      - id: melding_stroomsensor_storing_beoordelen
+        then:
+          - script.execute:
+              id: melding_stap
+              index: ${idx_stroomsensor_storing}
+              beoordelen: true
+              activeren: !lambda 'return !id(g_offset_ok);'
+              herstellen: !lambda 'return id(g_offset_ok);'
+              wachttijd_ms: ${offset_storing_ms}
+              hersteltijd_ms: ${offset_storing_ms}
+              onderdrukken: false
+
+      # De drie pompwaarschuwingen (FR-013 t/m FR-015) samen:
+      # - onderdrukt zonder instellingen;
+      # - niet beoordeeld bij een onbekende pompstatus: een actieve waarschuwing blijft staan.
+
+      # FR-013, FR-021
+      # Het niveau staat meer dan de marge boven het inschakelniveau en de pomp staat stil,
+      # gedurende de wachttijd. Herstel: de pomp draait, of het niveau zakt 2 cm onder die grens.
+      - id: melding_pomp_start_niet_beoordelen
+        then:
+          - script.execute:
+              id: melding_stap
+              index: ${idx_pomp_start_niet}
+              beoordelen: !lambda 'return id(g_pomp_status) != ${pomp_onbekend};'
+              activeren: !lambda |-
+                return ${niveau_bruikbaar} && ${pomp_staat_stil} &&
+                       id(g_hoogte_cm) > id(g_inschakelniveau_cm) + id(start_marge_cm).state;
+              herstellen: !lambda |-
+                return ${pomp_draait_nu} ||
+                       (${niveau_bruikbaar} &&
+                        id(g_hoogte_cm) <
+                            id(g_inschakelniveau_cm) + id(start_marge_cm).state - ${start_niet_herstel_cm});
+              wachttijd_ms: !lambda 'return (int) (id(start_wachttijd_s).state * ${ms_per_s});'
+              hersteltijd_ms: 0
+              onderdrukken: !lambda 'return !id(g_ingesteld);'
+
+      # FR-014
+      # De pomp draait al de controletijd en het niveau is minder dan de minimale daling gezakt.
+      # Herstel: binnen een pompbeurt is de daling wel gehaald. Een NAN maakt elke vergelijking
+      # onwaar.
+      - id: melding_pomp_pompt_niet_af_beoordelen
+        then:
+          - script.execute:
+              id: melding_stap
+              index: ${idx_pomp_pompt_niet_af}
+              beoordelen: !lambda 'return id(g_pomp_status) != ${pomp_onbekend};'
+              activeren: !lambda |-
+                return ${pomp_draait_nu} && ${niveau_bruikbaar} &&
+                       (uint32_t) (millis() - id(g_pomp_start_ms)) >=
+                           (uint32_t) (id(afpomp_controletijd_s).state * ${ms_per_s}) &&
+                       id(g_niveau_start_cm) - id(g_hoogte_cm) < id(afpomp_min_daling_cm).state;
+              herstellen: !lambda |-
+                return ${pomp_draait_nu} && ${niveau_bruikbaar} &&
+                       id(g_niveau_start_cm) - id(g_hoogte_cm) >= id(afpomp_min_daling_cm).state;
+              wachttijd_ms: 0
+              hersteltijd_ms: 0
+              onderdrukken: !lambda 'return !id(g_ingesteld);'
+
+      # FR-015
+      # De pomp draait langer dan de maximale looptijd; daarvoor is geen niveau nodig. Herstel:
+      # de pomp staat stil.
+      - id: melding_pomp_draait_te_lang_beoordelen
+        then:
+          - script.execute:
+              id: melding_stap
+              index: ${idx_pomp_draait_te_lang}
+              beoordelen: !lambda 'return id(g_pomp_status) != ${pomp_onbekend};'
+              activeren: !lambda |-
+                return ${pomp_draait_nu} &&
+                       (uint32_t) (millis() - id(g_pomp_start_ms)) >
+                           (uint32_t) (id(max_looptijd_min).state * ${ms_per_min});
+              herstellen: !lambda 'return ${pomp_staat_stil};'
+              wachttijd_ms: 0
+              hersteltijd_ms: 0
+              onderdrukken: !lambda 'return !id(g_ingesteld);'
+
+      # FR-012 t/m FR-018
+      # Elke seconde: alle meldingen beoordelen, daarna de status en de signalering bijwerken.
+      - id: meldingen_beoordelen
+        then:
+          - script.execute: melding_niet_ingesteld_beoordelen
+          - script.execute: melding_hoogwater_beoordelen
+          - script.execute: melding_niveausensor_storing_beoordelen
+          - script.execute: melding_stroomsensor_storing_beoordelen
+          - script.execute: melding_pomp_start_niet_beoordelen
+          - script.execute: melding_pomp_pompt_niet_af_beoordelen
+          - script.execute: melding_pomp_draait_te_lang_beoordelen
+          - script.execute: status_bijwerken
+
+      # FR-018
+      # De apparaatstatus: ALARM > WAARSCHUWING > NIET_INGESTELD > STORING > NORMAAL
+      # (data-model §5). Alleen bij een verandering gepubliceerd.
+      - id: status_bijwerken
+        then:
+          - lambda: |-
+              const uint8_t actief = id(g_actieve_set);
+              const char *nieuw = (actief & ${bits_alarm})                  ? "alarm"
+                                  : (actief & ${bits_waarschuwing})         ? "waarschuwing"
+                                  : (actief & (1u << ${idx_niet_ingesteld})) ? "niet_ingesteld"
+                                  : (actief & ${bits_storing})              ? "storing"
+                                                                            : "normaal";
+              if (id(status).state != nieuw) {
+                id(status).publish_state(nieuw);
+              }
+          - script.execute: signalering_bijwerken
+
+    # FR-003, FR-018; data-model §5
+    # Eerst het niveau verwerken, dan de meldingen beoordelen met de nieuwe niveaustatus.
+    interval:
+      - interval: ${verwerking_interval}
+        then:
+          - script.execute: niveau_verwerken
+          - script.execute: meldingen_beoordelen
+
+  # -------------------------------------------------------------------------------------------
+  # ---- 6. Instellingen ----
+  # -------------------------------------------------------------------------------------------
+  # FR-023, FR-024, FR-028; data-model §1, research R11
+  instellingen:
+    globals:
+      # De vijf instellingen met onderlinge regels bewaren hun geaccepteerde waarde zelf. Zo
+      # komt een afgewezen waarde na een herstart niet terug (research R11). De verplichte
+      # beginnen op NAN: "nog niet ingesteld".
+      - id: g_afstand_leeg_cm
+        type: float
+        restore_value: true
+        initial_value: 'NAN'
+      - id: g_afstand_vol_cm
+        type: float
+        restore_value: true
+        initial_value: 'NAN'
+      - id: g_inschakelniveau_cm
+        type: float
+        restore_value: true
+        initial_value: 'NAN'
+      - id: g_alarmdrempel_pct
+        type: float
+        restore_value: true
+        initial_value: '${alarmdrempel_pct_std}'
+      - id: g_herstelmarge_pct
+        type: float
+        restore_value: true
+        initial_value: '${herstelmarge_pct_std}'
+      # Waar als de verplichte instellingen gezet zijn en aan de regels voldoen.
+      - id: g_ingesteld
+        type: bool
+        restore_value: false
+        initial_value: 'false'
+
+    number:
+      # FR-002, FR-023, FR-024; instellingen met regels (instelling_toepassen)
+      # ESPHome weigert zelf een waarde buiten min/max. Binnen het bereik beslist
+      # instelling_toepassen.
+      - platform: template
+        id: afstand_leeg_cm
+        name: "Afstand leeg"
+        entity_category: config
+        mode: box
+        unit_of_measurement: cm
+        min_value: ${afstand_leeg_cm_min}
+        max_value: ${afstand_leeg_cm_max}
+        step: ${afstand_leeg_cm_stap}
+        update_interval: never
+        lambda: 'return id(g_afstand_leeg_cm);'
+        set_action:
+          - script.execute:
+              id: instelling_toepassen
+              sleutel: "afstand_leeg_cm"
+              waarde: !lambda 'return x;'
+      - platform: template
+        id: afstand_vol_cm
+        name: "Afstand vol"
+        entity_category: config
+        mode: box
+        unit_of_measurement: cm
+        min_value: ${afstand_vol_cm_min}
+        max_value: ${afstand_vol_cm_max}
+        step: ${afstand_vol_cm_stap}
+        update_interval: never
+        lambda: 'return id(g_afstand_vol_cm);'
+        set_action:
+          - script.execute:
+              id: instelling_toepassen
+              sleutel: "afstand_vol_cm"
+              waarde: !lambda 'return x;'
+      # FR-013
+      - platform: template
+        id: inschakelniveau_cm
+        name: "Inschakelniveau"
+        entity_category: config
+        mode: box
+        unit_of_measurement: cm
+        min_value: ${inschakelniveau_cm_min}
+        max_value: ${inschakelniveau_cm_max}
+        step: ${inschakelniveau_cm_stap}
+        update_interval: never
+        lambda: 'return id(g_inschakelniveau_cm);'
+        set_action:
+          - script.execute:
+              id: instelling_toepassen
+              sleutel: "inschakelniveau_cm"
+              waarde: !lambda 'return x;'
+      # FR-012
+      - platform: template
+        id: alarmdrempel_pct
+        name: "Alarmdrempel"
+        entity_category: config
+        mode: box
+        unit_of_measurement: "%"
+        min_value: ${alarmdrempel_pct_min}
+        max_value: ${alarmdrempel_pct_max}
+        step: ${alarmdrempel_pct_stap}
+        update_interval: never
+        lambda: 'return id(g_alarmdrempel_pct);'
+        set_action:
+          - script.execute:
+              id: instelling_toepassen
+              sleutel: "alarmdrempel_pct"
+              waarde: !lambda 'return x;'
+      # FR-021
+      - platform: template
+        id: herstelmarge_pct
+        name: "Herstelmarge"
+        entity_category: config
+        mode: box
+        unit_of_measurement: "%"
+        min_value: ${herstelmarge_pct_min}
+        max_value: ${herstelmarge_pct_max}
+        step: ${herstelmarge_pct_stap}
+        update_interval: never
+        lambda: 'return id(g_herstelmarge_pct);'
+        set_action:
+          - script.execute:
+              id: instelling_toepassen
+              sleutel: "herstelmarge_pct"
+              waarde: !lambda 'return x;'
+
+      # FR-023, FR-024; zelfstandige instellingen
+      # Optimistisch en bewaard: ESPHome weigert een waarde buiten min/max, en schrijft een
+      # gewijzigde waarde binnen 0,5 s naar flash.
+      # FR-012
+      - platform: template
+        id: hoogwater_wachttijd_s
+        name: "Wachttijd hoogwater"
+        entity_category: config
+        mode: box
+        unit_of_measurement: s
+        min_value: ${hoogwater_wachttijd_s_min}
+        max_value: ${hoogwater_wachttijd_s_max}
+        step: ${hoogwater_wachttijd_s_stap}
+        initial_value: ${hoogwater_wachttijd_s_std}
+        optimistic: true
+        restore_value: true
+      # FR-013
+      - platform: template
+        id: start_marge_cm
+        name: "Marge pomp start niet"
+        entity_category: config
+        mode: box
+        unit_of_measurement: cm
+        min_value: ${start_marge_cm_min}
+        max_value: ${start_marge_cm_max}
+        step: ${start_marge_cm_stap}
+        initial_value: ${start_marge_cm_std}
+        optimistic: true
+        restore_value: true
+      # FR-013
+      - platform: template
+        id: start_wachttijd_s
+        name: "Wachttijd pomp start niet"
+        entity_category: config
+        mode: box
+        unit_of_measurement: s
+        min_value: ${start_wachttijd_s_min}
+        max_value: ${start_wachttijd_s_max}
+        step: ${start_wachttijd_s_stap}
+        initial_value: ${start_wachttijd_s_std}
+        optimistic: true
+        restore_value: true
+      # FR-014
+      - platform: template
+        id: afpomp_controletijd_s
+        name: "Controletijd afpompen"
+        entity_category: config
+        mode: box
+        unit_of_measurement: s
+        min_value: ${afpomp_controletijd_s_min}
+        max_value: ${afpomp_controletijd_s_max}
+        step: ${afpomp_controletijd_s_stap}
+        initial_value: ${afpomp_controletijd_s_std}
+        optimistic: true
+        restore_value: true
+      # FR-014
+      - platform: template
+        id: afpomp_min_daling_cm
+        name: "Minimale daling afpompen"
+        entity_category: config
+        mode: box
+        unit_of_measurement: cm
+        min_value: ${afpomp_min_daling_cm_min}
+        max_value: ${afpomp_min_daling_cm_max}
+        step: ${afpomp_min_daling_cm_stap}
+        initial_value: ${afpomp_min_daling_cm_std}
+        optimistic: true
+        restore_value: true
+      # FR-015
+      - platform: template
+        id: max_looptijd_min
+        name: "Maximale looptijd pomp"
+        entity_category: config
+        mode: box
+        unit_of_measurement: min
+        min_value: ${max_looptijd_min_min}
+        max_value: ${max_looptijd_min_max}
+        step: ${max_looptijd_min_stap}
+        initial_value: ${max_looptijd_min_std}
+        optimistic: true
+        restore_value: true
+      # FR-016
+      - platform: template
+        id: sensorstoring_wachttijd_s
+        name: "Wachttijd sensorstoring"
+        entity_category: config
+        mode: box
+        unit_of_measurement: s
+        min_value: ${sensorstoring_wachttijd_s_min}
+        max_value: ${sensorstoring_wachttijd_s_max}
+        step: ${sensorstoring_wachttijd_s_stap}
+        initial_value: ${sensorstoring_wachttijd_s_std}
+        optimistic: true
+        restore_value: true
+      # FR-006
+      - platform: template
+        id: pomp_stroomdrempel_a
+        name: "Stroomdrempel pomp"
+        entity_category: config
+        mode: box
+        unit_of_measurement: A
+        min_value: ${pomp_stroomdrempel_a_min}
+        max_value: ${pomp_stroomdrempel_a_max}
+        step: ${pomp_stroomdrempel_a_stap}
+        initial_value: ${pomp_stroomdrempel_a_std}
+        optimistic: true
+        restore_value: true
+      # FR-028
+      - platform: template
+        id: led_helderheid_pct
+        name: "Led-helderheid"
+        entity_category: config
+        mode: box
+        unit_of_measurement: "%"
+        min_value: ${led_helderheid_pct_min}
+        max_value: ${led_helderheid_pct_max}
+        step: ${led_helderheid_pct_stap}
+        initial_value: ${led_helderheid_pct_std}
+        optimistic: true
+        restore_value: true
+        # Bewust geen on_value: dat gaat al af tijdens setup(), als de bewaarde waarde terugkomt,
+        # en de led-strip is dan nog niet opgezet (crash bij de eerste test, 2026-11-11).
+        # led_patroon_kiezen draait elke seconde en neemt een nieuwe helderheid binnen 1 s over.
+
+    # FR-028
+    # Uit = de zoemer klinkt nooit, behalve de opstartpiep. Bewaard, standaard aan.
+    switch:
+      - platform: template
+        id: zoemer
+        name: "Zoemer"
+        optimistic: true
+        restore_mode: RESTORE_DEFAULT_ON
+        on_turn_on:
+          - script.execute: zoemer_patroon_kiezen
+        on_turn_off:
+          - script.execute: zoemer_patroon_kiezen
+
+    script:
+      # FR-023, FR-024; randgeval "niet ingesteld"
+      - id: ingesteld_bepalen
+        then:
+          - lambda: |-
+              const float leeg = id(g_afstand_leeg_cm);
+              const float vol = id(g_afstand_vol_cm);
+              const float inschakel = id(g_inschakelniveau_cm);
+              id(g_ingesteld) = !std::isnan(leeg) && !std::isnan(vol) && !std::isnan(inschakel) &&
+                                leeg >= vol + ${geometrie_min_verschil_cm} &&
+                                inschakel < leeg - vol &&
+                                id(g_alarmdrempel_pct) - id(g_herstelmarge_pct) > 0;
+
+      # FR-023, FR-024; randgeval "ongeldige instellingen"
+      # Een nieuwe waarde voor een instelling met regels. De regels gelden voor de kandidaatset
+      # (de vijf waarden met de nieuwe waarde), en alleen als alle waarden erin gezet zijn.
+      # Afgewezen: de oude waarde blijft en wordt opnieuw gepubliceerd, zodat HA terugspringt.
+      - id: instelling_toepassen
+        parameters:
+          sleutel: string
+          waarde: float
+        then:
+          - lambda: |-
+              float leeg = id(g_afstand_leeg_cm);
+              float vol = id(g_afstand_vol_cm);
+              float inschakel = id(g_inschakelniveau_cm);
+              float drempel = id(g_alarmdrempel_pct);
+              float marge = id(g_herstelmarge_pct);
+              float *doel;
+              number::Number *entiteit;
+              bool geometrie = false;
+              if (sleutel == "afstand_leeg_cm") {
+                doel = &id(g_afstand_leeg_cm); entiteit = id(afstand_leeg_cm);
+                leeg = waarde; geometrie = true;
+              } else if (sleutel == "afstand_vol_cm") {
+                doel = &id(g_afstand_vol_cm); entiteit = id(afstand_vol_cm);
+                vol = waarde; geometrie = true;
+              } else if (sleutel == "inschakelniveau_cm") {
+                doel = &id(g_inschakelniveau_cm); entiteit = id(inschakelniveau_cm);
+                inschakel = waarde;
+              } else if (sleutel == "alarmdrempel_pct") {
+                doel = &id(g_alarmdrempel_pct); entiteit = id(alarmdrempel_pct);
+                drempel = waarde;
+              } else if (sleutel == "herstelmarge_pct") {
+                doel = &id(g_herstelmarge_pct); entiteit = id(herstelmarge_pct);
+                marge = waarde;
+              } else {
+                ESP_LOGE("${log_tag}", "onbekende instelling %s", sleutel.c_str());
+                return;
+              }
+              if (waarde == *doel) {
+                entiteit->publish_state(waarde);
+                return;
+              }
+              std::string reden;
+              if (!std::isnan(leeg) && !std::isnan(vol) &&
+                  !(leeg >= vol + ${geometrie_min_verschil_cm})) {
+                reden = str_sprintf("afstand_leeg_cm moet minstens %.0f cm groter zijn dan "
+                                    "afstand_vol_cm", ${geometrie_min_verschil_cm});
+              } else if (!std::isnan(leeg) && !std::isnan(vol) && !std::isnan(inschakel) &&
+                         !(inschakel < leeg - vol)) {
+                reden = "inschakelniveau_cm moet kleiner zijn dan het meetbereik";
+              } else if (!(drempel - marge > 0)) {
+                reden = "alarmdrempel_pct min herstelmarge_pct moet groter zijn dan 0";
+              }
+              if (reden.empty()) {
+                *doel = waarde;  // ESPHome bewaart de global binnen flash_write_interval
+                entiteit->publish_state(waarde);
+                ESP_LOGI("${log_tag}", "instelling %s = %.2f overgenomen", sleutel.c_str(), waarde);
+                id(ingesteld_bepalen).execute();
+                if (geometrie) {
+                  // Een andere afstand leeg of vol: de oude referentie klopt niet meer
+                  // (data-model §1, FR-026).
+                  id(niveaumeting_herstarten).execute(std::string("instelling"));
+                }
+              } else {
+                entiteit->publish_state(*doel);
+                ESP_LOGI("${log_tag}", "instelling %s = %.2f afgewezen: %s", sleutel.c_str(), waarde,
+                         reden.c_str());
+                id(gebeurtenis_melden).execute(
+                    std::string("instelling_afgewezen"),
+                    str_sprintf("%s = %.1f: %s", sleutel.c_str(), waarde, reden.c_str()));
+              }
+
+  # -------------------------------------------------------------------------------------------
+  # ---- 7. Signalering ----
+  # -------------------------------------------------------------------------------------------
+  # FR-027, FR-028, SC-009; contracts/lokale-signalering.md, research R9 en R10
+  signalering:
+    globals:
+      - id: g_led_patroon
+        type: int
+        restore_value: false
+        initial_value: '${led_patroon_geen}'
+      # NAN: nog niet gekozen. NAN is ongelijk aan elke waarde, dus de eerste keuze gaat altijd
+      # door.
+      - id: g_led_helderheid
+        type: float
+        restore_value: false
+        initial_value: 'NAN'
+      - id: g_led_bevestiging_bezig
+        type: bool
+        restore_value: false
+        initial_value: 'false'
+      # Waar tot de eerste geldige niveaumeting, en hoogstens opstarten_max.
+      - id: g_opstarten
+        type: bool
+        restore_value: false
+        initial_value: 'true'
+      - id: g_verbonden
+        type: bool
+        restore_value: false
+        initial_value: 'false'
+      - id: g_zoemer_modus
+        type: int
+        restore_value: false
+        initial_value: '${zoemer_modus_stil}'
+      # Dwingt zoemer_patroon_kiezen het patroon opnieuw te starten.
+      - id: g_zoemer_herstart
+        type: bool
+        restore_value: false
+        initial_value: 'false'
+      # Waar zolang zoemer_eenmalig speelt; dan start zoemer_patroon_kiezen niets.
+      - id: g_eenmalig_bezig
+        type: bool
+        restore_value: false
+        initial_value: 'false'
+      # "Stil" (FR-028): de zoemer zwijgt zolang de actieve meldingen een deelverzameling zijn
+      # van g_stil_set. Niet bewaard: na een herstart is "stil" opgeheven.
+      - id: g_stil
+        type: bool
+        restore_value: false
+        initial_value: 'false'
+      - id: g_stil_set
+        type: uint8_t
+        restore_value: false
+        initial_value: '0'
+      - id: g_vorige_set
+        type: uint8_t
+        restore_value: false
+        initial_value: '0'
+
+    # De statusled. Intern: alleen de scripts sturen hem.
+    light:
+      - platform: esp32_rmt_led_strip
+        id: statusled
+        name: "Statusled"
+        internal: true
+        pin: ${pin_led}
+        num_leds: ${led_aantal}
+        chipset: SK6812
+        channel_colors: ${led_kleurvolgorde}
+        # De ESP32-C3 heeft geen PSRAM.
+        use_psram: false
+        # Uit bij elke start, nooit uit flash hersteld (constitutie III).
+        restore_mode: ALWAYS_OFF
+        gamma_correct: ${led_gamma}
+        # Knipperpatronen springen; geen overgangen.
+        default_transition_length: 0s
+
+    # De piëzo: PWM, met de toon als frequentie en het volume als duty.
+    output:
+      - platform: ledc
+        id: zoemer_output
+        pin: ${pin_zoemer}
+        frequency: ${zoemer_frequentie}
+
+    script:
+      # FR-027, FR-028
+      # Eén led-patroon: continu (uit_ms 0) of knipperen. Een nieuw patroon herstart het script.
+      # Wachten gaat met delay, dus de lus blokkeert nooit (constitutie II).
+      - id: led_knipperen
+        mode: restart
+        parameters:
+          rood: float
+          groen: float
+          blauw: float
+          wit: float
+          helderheid: float
+          aan_ms: int
+          uit_ms: int
+        then:
+          - if:
+              condition:
+                lambda: 'return helderheid <= 0;'
+              then:
+                - light.turn_off:
+                    id: statusled
+                    transition_length: 0s
+              else:
+                - if:
+                    condition:
+                      lambda: 'return uit_ms == 0;'
+                    then:
+                      - light.turn_on:
+                          id: statusled
+                          brightness: !lambda 'return helderheid;'
+                          red: !lambda 'return rood;'
+                          green: !lambda 'return groen;'
+                          blue: !lambda 'return blauw;'
+                          white: !lambda 'return wit;'
+                          transition_length: 0s
+                    else:
+                      - while:
+                          condition:
+                            lambda: 'return true;'
+                          then:
+                            - light.turn_on:
+                                id: statusled
+                                brightness: !lambda 'return helderheid;'
+                                red: !lambda 'return rood;'
+                                green: !lambda 'return groen;'
+                                blue: !lambda 'return blauw;'
+                                white: !lambda 'return wit;'
+                                transition_length: 0s
+                            - delay: !lambda 'return aan_ms;'
+                            - light.turn_off:
+                                id: statusled
+                                transition_length: 0s
+                            - delay: !lambda 'return uit_ms;'
+
+      # FR-027, FR-028; contracts/lokale-signalering.md "Statusled"
+      # Kiest het led-patroon: de bovenste regel die geldt, wint. Start led_knipperen alleen als
+      # het patroon of de helderheid veranderd is.
+      - id: led_patroon_kiezen
+        then:
+          - if:
+              condition:
+                lambda: 'return !id(g_led_bevestiging_bezig);'
+              then:
+                - lambda: |-
+                    const uint8_t actief = id(g_actieve_set);
+                    int patroon;
+                    if (actief & ${bits_alarm}) patroon = ${led_patroon_alarm};
+                    else if (actief & ${bits_waarschuwing}) patroon = ${led_patroon_waarschuwing};
+                    else if (actief & ${bits_storing}) patroon = ${led_patroon_storing};
+                    else if (id(g_opstarten)) patroon = ${led_patroon_opstarten};
+                    else if (!id(g_verbonden)) patroon = ${led_patroon_geen_verbinding};
+                    else if (${pomp_draait_nu}) patroon = ${led_patroon_pomp};
+                    else patroon = ${led_patroon_normaal};
+                    float pct = id(led_helderheid_pct).state;
+                    if (std::isnan(pct)) pct = ${led_helderheid_pct_std};
+                    float helderheid = pct / ${pct_schaal};
+                    if (patroon == ${led_patroon_alarm}) {
+                      helderheid = fmaxf(helderheid, ${led_min_helderheid_alarm});
+                    }
+                    if (patroon == id(g_led_patroon) && helderheid == id(g_led_helderheid)) return;
+                    id(g_led_patroon) = patroon;
+                    id(g_led_helderheid) = helderheid;
+                    switch (patroon) {
+                      case ${led_patroon_alarm}:
+                        id(led_knipperen).execute(${led_rood_r}, ${led_rood_g}, ${led_rood_b},
+                            ${led_rood_w}, helderheid, ${led_alarm_aan_ms}, ${led_alarm_uit_ms});
+                        break;
+                      case ${led_patroon_waarschuwing}:
+                        id(led_knipperen).execute(${led_oranje_r}, ${led_oranje_g}, ${led_oranje_b},
+                            ${led_oranje_w}, helderheid, ${led_waarschuwing_aan_ms},
+                            ${led_waarschuwing_uit_ms});
+                        break;
+                      case ${led_patroon_storing}:
+                        id(led_knipperen).execute(${led_paars_r}, ${led_paars_g}, ${led_paars_b},
+                            ${led_paars_w}, helderheid, ${led_storing_aan_ms}, ${led_storing_uit_ms});
+                        break;
+                      case ${led_patroon_opstarten}:
+                        id(led_knipperen).execute(${led_wit_r}, ${led_wit_g}, ${led_wit_b},
+                            ${led_wit_w}, helderheid, 0, ${led_opstarten_uit_ms});
+                        break;
+                      case ${led_patroon_geen_verbinding}:
+                        id(led_knipperen).execute(${led_wit_r}, ${led_wit_g}, ${led_wit_b},
+                            ${led_wit_w}, helderheid, ${led_geen_verbinding_aan_ms},
+                            ${led_geen_verbinding_uit_ms});
+                        break;
+                      case ${led_patroon_pomp}:
+                        id(led_knipperen).execute(${led_blauw_r}, ${led_blauw_g}, ${led_blauw_b},
+                            ${led_blauw_w}, helderheid, 0, ${led_pomp_uit_ms});
+                        break;
+                      default:
+                        id(led_knipperen).execute(${led_groen_r}, ${led_groen_g}, ${led_groen_b},
+                            ${led_groen_w}, helderheid, ${led_normaal_aan_ms}, ${led_normaal_uit_ms});
+                        break;
+                    }
+
+      # FR-028
+      # Bevestiging van "zoemer stil": 2x wit. Daarna kiest led_patroon_kiezen opnieuw.
+      - id: led_bevestiging
+        mode: restart
+        then:
+          - globals.set:
+              id: g_led_bevestiging_bezig
+              value: 'true'
+          - script.stop: led_knipperen
+          - repeat:
+              count: ${led_bevestiging_aantal}
+              then:
+                - light.turn_on:
+                    id: statusled
+                    brightness: !lambda |-
+                      float pct = id(led_helderheid_pct).state;
+                      if (std::isnan(pct)) pct = ${led_helderheid_pct_std};
+                      return fmaxf(pct / ${pct_schaal}, ${led_min_helderheid_alarm});
+                    red: ${led_wit_r}
+                    green: ${led_wit_g}
+                    blue: ${led_wit_b}
+                    white: ${led_wit_w}
+                    transition_length: 0s
+                - delay: ${led_bevestiging_aan_ms}ms
+                - light.turn_off:
+                    id: statusled
+                    transition_length: 0s
+                - delay: ${led_bevestiging_uit_ms}ms
+          - globals.set:
+              id: g_led_bevestiging_bezig
+              value: 'false'
+          - globals.set:
+              id: g_led_patroon
+              value: '${led_patroon_geen}'
+          - script.execute: led_patroon_kiezen
+
+      # FR-027
+      # Een herhaald zoemerpatroon: `aantal` tonen, dan stil tot de periode om is. Een nieuw
+      # patroon herstart het script; wie het stopt, zet daarna de output uit.
+      - id: zoemer_herhalen
+        mode: restart
+        parameters:
+          aantal: int
+          aan_ms: int
+          uit_ms: int
+          periode_ms: int
+        then:
+          - while:
+              condition:
+                lambda: 'return true;'
+              then:
+                - repeat:
+                    count: !lambda 'return aantal;'
+                    then:
+                      - output.set_level:
+                          id: zoemer_output
+                          level: ${zoemer_niveau}
+                      - delay: !lambda 'return aan_ms;'
+                      - output.turn_off: zoemer_output
+                      - delay: !lambda 'return uit_ms;'
+                - delay: !lambda 'return periode_ms - aantal * (aan_ms + uit_ms);'
+
+      # FR-027, FR-028
+      # Een eenmalig patroon (opstarten, storing, hersteld, bevestiging). Onderbreekt een herhaald
+      # patroon en laat zoemer_patroon_kiezen dat daarna opnieuw starten. Wachtrij: twee
+      # eenmalige patronen klinken na elkaar.
+      - id: zoemer_eenmalig
+        mode: queued
+        parameters:
+          aantal: int
+          aan_ms: int
+          uit_ms: int
+          altijd: bool
+        then:
+          - globals.set:
+              id: g_eenmalig_bezig
+              value: 'true'
+          - script.stop: zoemer_herhalen
+          - output.turn_off: zoemer_output
+          - if:
+              condition:
+                lambda: 'return altijd || id(zoemer).state;'
+              then:
+                - repeat:
+                    count: !lambda 'return aantal;'
+                    then:
+                      - output.set_level:
+                          id: zoemer_output
+                          level: ${zoemer_niveau}
+                      - delay: !lambda 'return aan_ms;'
+                      - output.turn_off: zoemer_output
+                      - delay: !lambda 'return uit_ms;'
+          - delay: ${zoemer_pauze_ms}ms
+          - globals.set:
+              id: g_eenmalig_bezig
+              value: 'false'
+          - globals.set:
+              id: g_zoemer_herstart
+              value: 'true'
+          - script.execute: zoemer_patroon_kiezen
+
+      # FR-027, FR-028; contracts/lokale-signalering.md "Zoemer"
+      # Kiest het herhaalde patroon: alarm, waarschuwing of stil.
+      - id: zoemer_patroon_kiezen
+        then:
+          - lambda: |-
+              if (id(g_eenmalig_bezig)) return;
+              const uint8_t actief = id(g_actieve_set);
+              int modus = ${zoemer_modus_stil};
+              if (id(zoemer).state && !id(g_stil)) {
+                if (actief & ${bits_alarm}) modus = ${zoemer_modus_alarm};
+                else if (actief & ${bits_waarschuwing}) modus = ${zoemer_modus_waarschuwing};
+              }
+              if (modus == id(g_zoemer_modus) && !id(g_zoemer_herstart)) return;
+              id(g_zoemer_modus) = modus;
+              id(g_zoemer_herstart) = false;
+              if (modus == ${zoemer_modus_alarm}) {
+                id(zoemer_herhalen).execute(${zoemer_alarm_aantal}, ${zoemer_alarm_aan_ms},
+                                            ${zoemer_alarm_uit_ms}, ${zoemer_alarm_periode_ms});
+              } else if (modus == ${zoemer_modus_waarschuwing}) {
+                id(zoemer_herhalen).execute(${zoemer_waarschuwing_aantal},
+                                            ${zoemer_waarschuwing_aan_ms},
+                                            ${zoemer_waarschuwing_uit_ms},
+                                            ${zoemer_waarschuwing_periode_ms});
+              } else {
+                id(zoemer_herhalen).stop();
+                id(zoemer_output).turn_off();
+              }
+
+      # FR-027, FR-028, SC-009
+      # Na elke beoordeling: "stil" opheffen bij een nieuwe melding, de eenmalige piepjes, en
+      # led en zoemer bijwerken.
+      - id: signalering_bijwerken
+        then:
+          - lambda: |-
+              const uint8_t actief = id(g_actieve_set);
+              const uint8_t nieuw = actief & (uint8_t) ~id(g_vorige_set);
+              if (id(g_stil) && (actief & (uint8_t) ~id(g_stil_set)) != 0) {
+                id(g_stil) = false;  // een nieuwe melding: de zoemer klinkt weer (FR-028)
+                id(g_zoemer_herstart) = true;
+              }
+              if (!id(g_stil) && (nieuw & ${bits_storing})) {
+                id(zoemer_eenmalig).execute(${zoemer_storing_aantal}, ${zoemer_storing_aan_ms},
+                                            ${zoemer_storing_uit_ms}, false);
+              }
+              if (!id(g_stil) && (nieuw & (${bits_alarm} | ${bits_waarschuwing}))) {
+                id(g_zoemer_herstart) = true;  // het eerste patroon direct (SC-009)
+              }
+              if (id(g_vorige_set) != 0 && actief == 0) {
+                id(zoemer_eenmalig).execute(${zoemer_hersteld_aantal}, ${zoemer_hersteld_aan_ms},
+                                            ${zoemer_hersteld_uit_ms}, false);
+              }
+              id(g_vorige_set) = actief;
+          - script.execute: led_patroon_kiezen
+          - script.execute: zoemer_patroon_kiezen
+
+      # FR-028
+      # "Zoemer stil", vanaf de BOOT-knop of vanuit HA.
+      - id: zoemer_stilzetten
+        then:
+          - globals.set:
+              id: g_stil
+              value: 'true'
+          - lambda: 'id(g_stil_set) = id(g_actieve_set);'
+          - script.execute:
+              id: zoemer_eenmalig
+              aantal: ${zoemer_bevestiging_aantal}
+              aan_ms: ${zoemer_bevestiging_aan_ms}
+              uit_ms: ${zoemer_bevestiging_uit_ms}
+              altijd: false
+          - script.execute: led_bevestiging
+
+    # FR-028
+    # De BOOT-knop op het board (D9). GPIO9 is een strapping-pin; hier alleen ingang.
+    binary_sensor:
+      - platform: gpio
+        id: boot_knop
+        name: "BOOT-knop"
+        internal: true
+        pin:
+          number: ${pin_knop}
+          inverted: true
+          mode:
+            input: true
+            pullup: true
+          ignore_strapping_warning: true
+        filters:
+          - delayed_on: ${knop_debounce}
+        on_press:
+          - script.execute: zoemer_stilzetten
+
+    # FR-028
+    button:
+      - platform: template
+        id: zoemer_stil
+        name: "Zoemer stil"
+        on_press:
+          - script.execute: zoemer_stilzetten
+
+  # -------------------------------------------------------------------------------------------
+  # ---- 8. Gebeurtenissen en diagnose ----
+  # -------------------------------------------------------------------------------------------
+  # FR-010, FR-026; data-model §6, research R13
+  gebeurtenissen:
+    globals:
+      - id: g_herstart_gemeld
+        type: bool
+        restore_value: false
+        initial_value: 'false'
+
+    # Een ESPHome-event heeft alleen een type; de details gaan tegelijk naar Laatste gebeurtenis.
+    event:
+      - platform: template
+        id: gebeurtenis
+        name: "Gebeurtenis"
+        event_types:
+          - pomp_start
+          - pomp_stop
+          - melding_actief
+          - melding_hersteld
+          - herstart
+          - instelling_afgewezen
+          - niveaumeting_herstart
+
+    text_sensor:
+      - platform: template
+        id: laatste_gebeurtenis
+        name: "Laatste gebeurtenis"
+        update_interval: never
+      - platform: debug
+        reset_reason:
+          id: herstartreden
+          name: "Herstartreden"
+          entity_category: diagnostic
+
+    sensor:
+      - platform: wifi_signal
+        id: wifi_signaal
+        name: "WiFi-signaal"
+        update_interval: ${diagnose_interval}
+        entity_category: diagnostic
+      # De id kan niet "uptime" zijn: zo heet de integratie.
+      - platform: uptime
+        id: uptime_s
+        name: "Uptime"
+        update_interval: ${diagnose_interval}
+        entity_category: diagnostic
+
+    script:
+      # FR-010, FR-026
+      # Elke gebeurtenis: het event voor het logboek van HA, de details in Laatste gebeurtenis, en
+      # het log. Alleen live: zonder verbinding gaat de gebeurtenis verloren (FR-010).
+      - id: gebeurtenis_melden
+        parameters:
+          type: string
+          detail: string
+        then:
+          - event.trigger:
+              id: gebeurtenis
+              event_type: !lambda 'return type;'
+          - text_sensor.template.publish:
+              id: laatste_gebeurtenis
+              state: !lambda 'return type + ": " + detail;'
+          - logger.log:
+              level: INFO
+              tag: ${log_tag}
+              format: "gebeurtenis %s: %s"
+              args: ['type.c_str()', 'detail.c_str()']
+
+      # FR-026
+      # Eenmalig na het opstarten, 3 s na de eerste verbinding: de herstart met de reden.
+      - id: herstart_melden
+        mode: single
+        then:
+          - delay: ${herstart_melden_na}
+          - globals.set:
+              id: g_herstart_gemeld
+              value: 'true'
+          - script.execute:
+              id: gebeurtenis_melden
+              type: "herstart"
+              detail: !lambda 'return id(herstartreden).state;'

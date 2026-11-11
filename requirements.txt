@@ -1,0 +1,3 @@
+# ESPHome is bewust exact vastgepind (constitutie I, research R2). Een nieuwere versie pas
+# gebruiken na een eigen compile-gate en een controle op het apparaat.
+esphome==2026.10.1

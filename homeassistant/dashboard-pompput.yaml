@@ -1,0 +1,101 @@
+# Voorbeelddashboard voor de pompput-monitor (SC-006: vulgraad en pompstatus binnen 10 s af te lezen).
+#
+# Gebruik: maak in Home Assistant een nieuw dashboard, open "Ruwe configuratie-editor" en plak
+# dit bestand. Of voeg alleen de kaarten onder `cards:` toe aan een bestaande weergave.
+#
+# Het in- en uitklappen van de instellingen gebruikt de helper
+# input_boolean.pompput_toon_instellingen uit homeassistant/packages/pompput.yaml
+# (Home Assistant heeft zonder extra kaarten geen inklapbare kaart).
+
+title: Pompput
+views:
+  - title: Pompput
+    path: pompput
+    icon: mdi:water-pump
+    cards:
+      - type: entities
+        title: Pompput
+        state_color: true
+        entities:
+          - entity: sensor.pompput_vulgraad
+            name: Vulgraad
+          - entity: sensor.pompput_waterhoogte
+            name: Waterhoogte
+          - entity: binary_sensor.pompput_pomp
+            name: Pomp
+          - entity: sensor.pompput_status
+            name: Status
+          - entity: sensor.pompput_pompstarts_24_uur
+            name: Pompstarts 24 uur
+          - entity: sensor.pompput_looptijd_laatste_pompbeurt
+            name: Looptijd laatste pompbeurt
+          - entity: sensor.pompput_laatste_gebeurtenis
+            name: Laatste gebeurtenis
+
+      - type: history-graph
+        title: Laatste 24 uur
+        hours_to_show: 24
+        entities:
+          - entity: sensor.pompput_waterhoogte
+            name: Waterhoogte
+          - entity: binary_sensor.pompput_pomp
+            name: Pomp
+
+      # FR-026: wat er is gebeurd (pompbeurten, meldingen, herstart, afgewezen instellingen)
+      - type: logbook
+        title: Gebeurtenissen
+        hours_to_show: 48
+        target:
+          entity_id:
+            - event.pompput_gebeurtenis
+
+      - type: entities
+        title: Bediening
+        entities:
+          - entity: button.pompput_zoemer_stil
+            name: Zoemer stil
+          - entity: switch.pompput_zoemer
+            name: Zoemer aan
+          - entity: input_boolean.pompput_toon_instellingen
+            name: Instellingen tonen
+
+      - type: conditional
+        conditions:
+          - condition: state
+            entity: input_boolean.pompput_toon_instellingen
+            state: "on"
+        card:
+          type: entities
+          title: Instellingen
+          entities:
+            - type: section
+              label: Put
+            - number.pompput_afstand_leeg
+            - number.pompput_afstand_vol
+            - number.pompput_inschakelniveau
+            - type: section
+              label: Hoogwater
+            - number.pompput_alarmdrempel
+            - number.pompput_wachttijd_hoogwater
+            - number.pompput_herstelmarge
+            - type: section
+              label: Pomp
+            - number.pompput_marge_pomp_start_niet
+            - number.pompput_wachttijd_pomp_start_niet
+            - number.pompput_controletijd_afpompen
+            - number.pompput_minimale_daling_afpompen
+            - number.pompput_maximale_looptijd_pomp
+            - number.pompput_stroomdrempel_pomp
+            - type: section
+              label: Apparaat
+            - number.pompput_wachttijd_sensorstoring
+            - number.pompput_led_helderheid
+            - button.pompput_niveaumeting_opnieuw_starten
+            - type: section
+              label: Diagnose
+            - sensor.pompput_afstand_ruw
+            - sensor.pompput_offset_stroomsensor
+            - sensor.pompput_pompstroom
+            - sensor.pompput_wifi_signaal
+            - sensor.pompput_uptime
+            - sensor.pompput_herstartreden
