@@ -3,12 +3,13 @@
 Bewaking van een buitenpompput. Een HC-SR04 meet het waterniveau, en een ACS712 ziet aan de
 stroom of de pomp draait. Daarmee bepaalt het apparaat zelf de meldingen (hoogwater, pomp start
 niet, pomp pompt niet af, pomp draait te lang, sensorstoringen, niet ingesteld) en geeft alles
-via de versleutelde native API van ESPHome door aan Home Assistant. Een RGBW-led signaleert
-ter plaatse, ook zonder Home Assistant. Het apparaat stuurt de pomp **nooit** aan.
+via de versleutelde native API van ESPHome door aan Home Assistant. Zes RGBW-leds signaleren
+ter plaatse, ook zonder Home Assistant: led 1 de toestand, led 2–6 het waterniveau. Het apparaat stuurt de pomp **nooit** aan.
 
 Ontwerp en eisen: [specs/001-pompput-monitor/](specs/001-pompput-monitor/) (spec, plan,
 data-model, contracten, quickstart, verificatie) en
-[specs/002-zoemer-verwijderen/](specs/002-zoemer-verwijderen/) (de zoemer is vervallen).
+[specs/002-zoemer-verwijderen/](specs/002-zoemer-verwijderen/) (de zoemer is vervallen) en
+[specs/003-niveau-ledbalk/](specs/003-niveau-ledbalk/) (zes leds met een niveaubalk).
 
 > **⚠️ Veiligheid: 230 V**
 >
@@ -29,7 +30,7 @@ data-model, contracten, quickstart, verificatie) en
 | Framework | `esp-idf` (de eigen ESP-IDF-toolchain van ESPHome; PlatformIO is niet nodig) |
 | Board | Seeed Studio XIAO ESP32C3 (`esp32: variant: esp32c3`) |
 | Koppeling met HA | ESPHome native API met versleuteling; updates via WiFi (OTA) met dezelfde sleutel |
-| Componenten | `ultrasonic`, `adc`, `ct_clamp`, `esp32_rmt_led_strip`, `template`, `globals`, `script`, `interval`, `debug`, `wifi_signal`, `uptime` |
+| Componenten | `ultrasonic`, `adc`, `ct_clamp`, `esp32_rmt_led_strip`, `partition`, `template`, `globals`, `script`, `interval`, `debug`, `wifi_signal`, `uptime` |
 | Externe componenten | geen |
 
 Het hele apparaat staat in één bestand: [esphome/pompput.yaml](esphome/pompput.yaml), met
@@ -66,9 +67,9 @@ Samenvatting voor het solderen. De gezaghebbende bron blijft
 | ACS712 30 A | OUT | D1 / A1 | 3 | deler: 10 kΩ in serie, 10 kΩ naar GND (optioneel 10 nF naar GND) |
 | ACS712 30 A | GND | GND | — | |
 | ACS712 30 A | IP+ / IP− | — | — | in serie met de **fase** naar de pomp (**230 V**) |
-| RGBW-led (SK6812) | VDD | 5V | — | via een diode (1N4001 of 1N4148); 100 nF naar GND bij de led |
-| RGBW-led (SK6812) | DIN | D4 | 6 | 330 Ω in serie |
-| RGBW-led (SK6812) | GND | GND | — | |
+| 6 × RGBW-led (SK6812), keten | VDD | 5V | — | via een diode **1N4001**; elko 100 µF bij led 1, 100 nF per led |
+| 6 × RGBW-led (SK6812), keten | DIN van led 1 | D4 | 6 | 330 Ω in serie; DOUT van elke led naar DIN van de volgende |
+| 6 × RGBW-led (SK6812), keten | GND | GND | — | |
 
 Vrij: D0 (GPIO2), D5 (GPIO7), D6 (GPIO21), D7 (GPIO20), D8 (GPIO8), D10 (GPIO10). De BOOT-knop
 op het board (D9) heeft geen functie in de firmware.
@@ -80,11 +81,11 @@ Bovenaanzicht, USB-C boven. Controleer de opdruk op je board.
 ```text
                           USB-C
                      ┌────┴┴┴┴────┐
-          (vrij)  D0 │ ●        ● │ 5V    → 5 V-rail: HC-SR04, ACS712, led (via diode)
+          (vrij)  D0 │ ●        ● │ 5V    → 5 V-rail: HC-SR04, ACS712, leds (via diode)
   ACS712 OUT ──▶  D1 │ ●        ● │ GND   → GND-rail: alle onderdelen
   HC-SR04 TRIG ◀─ D2 │ ●        ● │ 3V3     (niet gebruikt)
   HC-SR04 ECHO ─▶ D3 │ ●        ● │ D10     (vrij)
-  led DIN      ◀─ D4 │ ●        ● │ D9      BOOT-knop (op het board, geen functie)
+  led 1 DIN    ◀─ D4 │ ●        ● │ D9      BOOT-knop (op het board, geen functie)
           (vrij)  D5 │ ●        ● │ D8      (vrij)
           (vrij)  D6 │ ●        ● │ D7      (vrij)
                      └────────────┘
@@ -121,20 +122,27 @@ GND ── GND                       ├─[10 kΩ]── GND
                                  └─[10 nF]── GND (optioneel, tegen ruis)
 ```
 
-**RGBW-statusled (SK6812).** Door de diode is VDD ongeveer 4,3 V. Daardoor is het
-3,3 V-datasignaal van de XIAO een geldig "hoog", zonder level shifter.
+**Ledbalk: zes RGBW-leds (SK6812) in een keten.** Door de diode is VDD ongeveer 4,3 V.
+Daardoor is het 3,3 V-datasignaal van de XIAO een geldig "hoog", zonder level shifter. Led 1 is
+de eerste in de keten (het dichtst bij het apparaat); hang de balk verticaal met led 1 onder en
+led 6 boven. Gebruik een **1N4001**: een 1N4148 kan de stroom van zes leds niet goed aan.
 
 ```text
-5V ──|>|── VDD                       diode 1N4001 of 1N4148, streep (kathode) aan de led-kant
-D4 (GPIO6) ──[330 Ω]── DIN
-GND ─────────────────── GND
-                                     100 nF tussen VDD en GND, dicht bij de led
+5V ──|>|──┬──────────┬──────── … ───┬── VDD van led 1 t/m 6     diode 1N4001, streep (kathode)
+   1N4001 │          │              │                           aan de led-kant
+        100 µF     100 nF         100 nF                        (100 nF per led; vaak al op de strip)
+          │          │              │
+GND ──────┴──────────┴──────── … ───┴── GND van led 1 t/m 6
+
+D4 (GPIO6) ──[330 Ω]── DIN led 1   DOUT led 1 ── DIN led 2   …   DOUT led 5 ── DIN led 6
 ```
 
 ### Voeding
 
 - Een 5 V USB-C-adapter van minimaal 1 A in de USB-C van de XIAO. De 5V-pin van de XIAO voedt
-  de HC-SR04, de ACS712 en (via de diode) de led.
+  de HC-SR04, de ACS712 en (via de diode) de zes leds.
+- Verbruik: XIAO tot ongeveer 350 mA piek, sensoren ongeveer 25 mA, de leds samen hoogstens
+  ongeveer 146 mA (op 100 % helderheid). Totaal ongeveer 520 mA piek, dus 1 A is ruim genoeg.
 - Alle GND's komen samen op de GND van de XIAO.
 - Hang de adapter aan een groep die **niet** uitvalt als de beveiliging van de pomp afslaat.
 
@@ -145,7 +153,7 @@ GND ─────────────────── GND
 2. Kijk na of de 2 kΩ van de ECHO-deler echt aan **GND** zit. Zonder die verbinding komt er
    bijna 5 V op D3, en dat kan de pin beschadigen. Zitten de 1 kΩ en de 2 kΩ omgekeerd, dan
    komt er maar ongeveer 1,7 V op D3: niet schadelijk, maar de sensor meet dan niets.
-3. Kijk na of de diode van de led goed om zit: de streep wijst naar de led.
+3. Kijk na of de diode van de leds goed om zit: de streep wijst naar de leds.
 
 ## Bouwen en flashen
 
@@ -222,16 +230,25 @@ het apparaat.
 
 ## Signalering ter plaatse
 
-| Led | Betekenis |
+**Led 1 (onderaan): de toestand.** De bovenste regel die geldt, wint.
+
+| Led 1 | Betekenis |
 |---|---|
 | rood, snel knipperen | alarm (hoogwater) |
 | oranje, 1 Hz | waarschuwing (pomp) |
-| paars, kort per 2 s | storing of niet ingesteld |
+| paars, kort per 2 s | storing, niet ingesteld, of het niveau is onbekend (meting weggevallen) |
 | wit, continu | opstarten |
 | wit, flits per 2 s | geen verbinding met Home Assistant |
-| blauw, continu | pomp draait |
-| groen, flits per 5 s | normaal |
+| blauw, 1 s aan / 1 s uit | pomp draait |
+| blauw, continu | normaal |
+
+**Led 2–6: het waterniveau**, als een blauwe balk in vijf gelijke stappen tot de alarmdrempel.
+Bij de standaarddrempel van 80 % gaan ze aan bij 16, 32, 48, 64 en 80 %. Led 6 brandt dus
+zodra het water de alarmdrempel bereikt, al vóór het alarm afgaat. Een led gaat pas weer uit
+als het niveau 2 procentpunt onder zijn grens zakt. Is het niveau onbekend, dan is de balk uit.
+De Led-helderheid in Home Assistant geldt voor alle zes leds.
 
 De BOOT-knop heeft geen functie in de firmware. Houd hem **niet** ingedrukt tijdens het
 opstarten, want dan gaat de chip in de downloadmodus. Details:
-[contracts/lokale-signalering.md](specs/001-pompput-monitor/contracts/lokale-signalering.md).
+[contracts/lokale-signalering.md](specs/001-pompput-monitor/contracts/lokale-signalering.md) en
+[003 contracts/ledbalk.md](specs/003-niveau-ledbalk/contracts/ledbalk.md).

@@ -3,8 +3,8 @@
 #   draait.
 # - Het apparaat bepaalt zelf zeven meldingen: hoogwater, drie pompwaarschuwingen, twee
 #   sensorstoringen en "niet ingesteld".
-# - Ter plaatse signaleert een RGBW-statusled; Home Assistant krijgt alles via de versleutelde
-#   native API.
+# - Ter plaatse signaleren zes RGBW-leds: led 1 de toestand, led 2-6 het waterniveau. Home
+#   Assistant krijgt alles via de versleutelde native API.
 # - Het apparaat bewaakt alleen. Het heeft geen uitgang naar de pomp (FR-007).
 #
 # Secties, in deze volgorde:
@@ -14,13 +14,14 @@
 #   4. pomp: adc, ct_clamp, pomp_bijwerken, pomp, looptijd, pompstroom, offset
 #   5. meldingen: melding_stap, de beoordelingsscripts, de zeven meldingen, status
 #   6. instellingen: globals, numbers, instelling_toepassen
-#   7. signalering: led, patroonscripts
+#   7. signalering: ledbalk, patroonscripts
 #   8. gebeurtenissen en diagnose: event, Laatste gebeurtenis, diagnose
 # ESPHome staat een sleutel als `sensor:` maar één keer toe. Sectie 1 en 2 staan daarom
 # bovenaan, en de secties 3-8 zijn elk een pakket in dit bestand (packages:); ESPHome voegt hun
 # lijsten samen. Een id komt maar in één sectie voor.
 #
-# Spec, plan, contracten en validatie: specs/001-pompput-monitor/ en specs/002-zoemer-verwijderen/
+# Spec, plan, contracten en validatie: specs/001-pompput-monitor/, specs/002-zoemer-verwijderen/
+# en specs/003-niveau-ledbalk/
 # Pinnen: specs/001-pompput-monitor/contracts/hardware.md is gezaghebbend.
 # Elk script en elke entiteit noemt de requirements die het uitvoert (FR-0xx).
 
@@ -33,7 +34,7 @@ substitutions:
   # ---- Apparaat ----
   device_name: "pompput"           # hostnaam pompput.local
   friendly_name: "Pompput"         # naam in Home Assistant; de entity-id's volgen hieruit
-  project_version: "0.3.0"
+  project_version: "0.4.0"
   log_level: "INFO"                # INFO bij levering; DEBUG alleen voor validatie
   log_tag: "pompput"
   # ESPHome schrijft gewijzigde instellingen binnen 0,5 s naar flash, zodat een stroomonderbreking
@@ -44,7 +45,7 @@ substitutions:
   pin_acs712: "GPIO3"              # D1/A1, ADC1; ACS712 OUT via deler 10k/10k
   pin_trig: "GPIO4"                # D2; HC-SR04 TRIG, rechtstreeks
   pin_echo: "GPIO5"                # D3; HC-SR04 ECHO via deler 1k/2k
-  pin_led: "GPIO6"                 # D4; SK6812 DIN via 330 ohm
+  pin_led: "GPIO6"                 # D4; DIN van led 1 van 6 (SK6812-keten) via 330 ohm
   # D5 (GPIO7) is vrij en wordt niet geconfigureerd; D9 (GPIO9) is de BOOT-knop op het board,
   # zonder functie in de firmware (002 research R2).
 
@@ -141,8 +142,15 @@ substitutions:
   led_helderheid_pct_stap: "1"
   led_helderheid_pct_std: "30"
 
-  # ---- Signalering (contracts/lokale-signalering.md) ----
-  led_aantal: "1"
+  # ---- Signalering (contracts/lokale-signalering.md, 003 contracts/ledbalk.md) ----
+  led_aantal: "6"
+  # Positie in de keten; led 1 zit het dichtst bij het apparaat (003 FR-001, contracts/ledbalk.md §4)
+  led_index_1: "0"
+  led_index_2: "1"
+  led_index_3: "2"
+  led_index_4: "3"
+  led_index_5: "4"
+  led_index_6: "5"
   led_kleurvolgorde: "GRBW"        # SK6812 RGBW; op de bank controleren (research R9)
   # Lineair: de kleuren uit het contract (bijvoorbeeld oranje 255,80,0) en de helderheid komen
   # zo op de led. Met de standaard-gamma van 2,8 zou oranje vrijwel rood worden.
@@ -169,10 +177,6 @@ substitutions:
   led_blauw_g: "0.0"
   led_blauw_b: "1.0"
   led_blauw_w: "0.0"
-  led_groen_r: "0.0"
-  led_groen_g: "1.0"
-  led_groen_b: "0.0"
-  led_groen_w: "0.0"
   # Ritmes in ms. Een continu patroon heeft _uit_ms 0.
   led_alarm_aan_ms: "125"
   led_alarm_uit_ms: "125"
@@ -183,9 +187,15 @@ substitutions:
   led_opstarten_uit_ms: "0"
   led_geen_verbinding_aan_ms: "100"
   led_geen_verbinding_uit_ms: "1900"
-  led_pomp_uit_ms: "0"
-  led_normaal_aan_ms: "100"
-  led_normaal_uit_ms: "4900"
+  # Pomp draait: blauw 1 s aan / 1 s uit (003 FR-014)
+  led_pomp_aan_ms: "1000"
+  led_pomp_uit_ms: "1000"
+  # Normaal: continu blauw (003 FR-002, FR-013)
+  led_normaal_uit_ms: "0"
+  # Led 2-6: vijf gelijke stappen tot de alarmdrempel (003 FR-004)
+  niveaubalk_stappen: "5"
+  # Een balkled gaat pas uit 2 procentpunt onder zijn grens (003 FR-008)
+  niveaubalk_herstelmarge_pct: "2.0"
 
   # ---- Codes (benoemde toestanden; constitutie II en V) ----
   # Niveaustatus (data-model §3).
@@ -216,7 +226,8 @@ substitutions:
   bits_alarm: "0x01"               # bit 0
   bits_waarschuwing: "0x0E"        # bits 1-3
   bits_storing: "0x70"             # bits 4-6
-  # Ledpatroon, in volgorde van prioriteit (contracts/lokale-signalering.md).
+  # Ledpatroon, in volgorde van prioriteit (contracts/ledbalk.md §1; 'niveau onbekend' gebruikt
+  # led_patroon_storing).
   led_patroon_geen: "0"            # dwingt een nieuwe keuze af
   led_patroon_alarm: "1"
   led_patroon_waarschuwing: "2"
@@ -238,6 +249,9 @@ substitutions:
   pomp_staat_stil: "(id(g_pomp_status) == ${pomp_stil} || id(g_pomp_status) == ${pomp_start_kandidaat})"
   # Het niveau is bruikbaar voor een beslissing: GELDIG en een waterhoogte.
   niveau_bruikbaar: "(id(g_niveau_status) == ${niveau_geldig} && !std::isnan(id(g_hoogte_cm)))"
+  # De ingestelde led-helderheid als 0-1; de standaardwaarde zolang de instelling nog onbekend
+  # is (003 FR-011).
+  led_helderheid_nu: "((std::isnan(id(led_helderheid_pct).state) ? ${led_helderheid_pct_std} : id(led_helderheid_pct).state) / ${pct_schaal})"
 
 # ---------------------------------------------------------------------------------------------
 # ---- 2. Basis ----
@@ -249,8 +263,8 @@ esphome:
   project:
     name: diy.pompput
     version: ${project_version}
-  # FR-025, FR-027; contracts/hardware.md "Veilige begintoestand"
-  # De led staat al uit (restore_mode ALWAYS_OFF) en TRIG is laag:
+  # FR-025, FR-027; 003 FR-012; contracts/hardware.md "Veilige begintoestand"
+  # De leds staan al uit (restore_mode ALWAYS_OFF op de strip en de zes partities) en TRIG is laag:
   # dat regelen de componenten zelf, vóór deze opstartvolgorde. Priority -100: alle componenten
   # zijn dan opgezet, dus ook de bewaarde instellingen en de led.
   on_boot:
@@ -1175,8 +1189,9 @@ packages:
               if (id(status).state != nieuw) {
                 id(status).publish_state(nieuw);
               }
-          # De led volgt de nieuwe toestand direct (002 FR-003).
+          # Led 1 en de niveaubalk volgen de nieuwe toestand direct (002 FR-003; 003 FR-009).
           - script.execute: led_patroon_kiezen
+          - script.execute: niveaubalk_bijwerken
 
     # FR-003, FR-018; data-model §5
     # Eerst het niveau verwerken, dan de meldingen beoordelen met de nieuwe niveaustatus.
@@ -1518,10 +1533,10 @@ packages:
               }
 
   # -------------------------------------------------------------------------------------------
-  # ---- 7. Signalering ----
+  # ---- 7. Signalering: ledbalk, patroonscripts ----
   # -------------------------------------------------------------------------------------------
-  # FR-027, FR-028 (led-helderheid); 002 FR-001–FR-007; contracts/lokale-signalering.md,
-  # 001 research R9
+  # FR-027, FR-028 (led-helderheid); 002 FR-001–FR-007; 003 FR-001–FR-017;
+  # contracts/lokale-signalering.md, 003 contracts/ledbalk.md, 001 research R9, 003 research R1-R3
   signalering:
     globals:
       - id: g_led_patroon
@@ -1543,12 +1558,25 @@ packages:
         type: bool
         restore_value: false
         initial_value: 'false'
+      # 003 FR-008; data-model §2. Aantal brandende balkleds, 0-5.
+      - id: g_niveaubalk_aantal
+        type: uint8_t
+        restore_value: false
+        initial_value: '0'
+      # Helderheid waarmee de balk het laatst is gezet; NAN dwingt de eerste keer af.
+      - id: g_niveaubalk_helderheid
+        type: float
+        restore_value: false
+        initial_value: 'NAN'
 
-    # De statusled. Intern: alleen de scripts sturen hem.
+    # De ledbalk: één keten van zes leds, verdeeld in zes partities van één led.
+    # Alles intern: alleen de scripts sturen de leds.
     light:
+      # De driver van de keten. Geen script stuurt hem direct; alleen de partities hieronder
+      # (003 research R1).
       - platform: esp32_rmt_led_strip
-        id: statusled
-        name: "Statusled"
+        id: ledstrip
+        name: "Ledstrip"
         internal: true
         pin: ${pin_led}
         num_leds: ${led_aantal}
@@ -1556,11 +1584,80 @@ packages:
         channel_colors: ${led_kleurvolgorde}
         # De ESP32-C3 heeft geen PSRAM.
         use_psram: false
-        # Uit bij elke start, nooit uit flash hersteld (constitutie III).
+        # Uit bij elke start, nooit uit flash hersteld (constitutie III; 003 FR-012).
         restore_mode: ALWAYS_OFF
         gamma_correct: ${led_gamma}
         # Knipperpatronen springen; geen overgangen.
         default_transition_length: 0s
+      # Led 1: statuslampje (003 FR-001, FR-002, FR-003). Zelfde id als de vroegere enkele led,
+      # dus led_knipperen en led_patroon_kiezen sturen hem ongewijzigd aan.
+      - platform: partition
+        id: statusled
+        name: "Statusled"
+        internal: true
+        restore_mode: ALWAYS_OFF
+        gamma_correct: ${led_gamma}
+        default_transition_length: 0s
+        segments:
+          - id: ledstrip
+            from: ${led_index_1}
+            to: ${led_index_1}
+      # Led 2-6: niveaubalk (003 FR-001, FR-004). Alleen niveaubalk_bijwerken stuurt ze.
+      - platform: partition
+        id: niveauled_2
+        name: "Niveauled 2"
+        internal: true
+        restore_mode: ALWAYS_OFF
+        gamma_correct: ${led_gamma}
+        default_transition_length: 0s
+        segments:
+          - id: ledstrip
+            from: ${led_index_2}
+            to: ${led_index_2}
+      - platform: partition
+        id: niveauled_3
+        name: "Niveauled 3"
+        internal: true
+        restore_mode: ALWAYS_OFF
+        gamma_correct: ${led_gamma}
+        default_transition_length: 0s
+        segments:
+          - id: ledstrip
+            from: ${led_index_3}
+            to: ${led_index_3}
+      - platform: partition
+        id: niveauled_4
+        name: "Niveauled 4"
+        internal: true
+        restore_mode: ALWAYS_OFF
+        gamma_correct: ${led_gamma}
+        default_transition_length: 0s
+        segments:
+          - id: ledstrip
+            from: ${led_index_4}
+            to: ${led_index_4}
+      - platform: partition
+        id: niveauled_5
+        name: "Niveauled 5"
+        internal: true
+        restore_mode: ALWAYS_OFF
+        gamma_correct: ${led_gamma}
+        default_transition_length: 0s
+        segments:
+          - id: ledstrip
+            from: ${led_index_5}
+            to: ${led_index_5}
+      - platform: partition
+        id: niveauled_6
+        name: "Niveauled 6"
+        internal: true
+        restore_mode: ALWAYS_OFF
+        gamma_correct: ${led_gamma}
+        default_transition_length: 0s
+        segments:
+          - id: ledstrip
+            from: ${led_index_6}
+            to: ${led_index_6}
 
     script:
       # FR-027, FR-028
@@ -1616,8 +1713,9 @@ packages:
                                 transition_length: 0s
                             - delay: !lambda 'return uit_ms;'
 
-      # FR-027; 002 FR-002, FR-003; contracts/lokale-signalering.md "Statusled"
-      # Kiest het led-patroon: de bovenste regel die geldt, wint. Start led_knipperen alleen als
+      # FR-027; 002 FR-002, FR-003; 003 FR-002, FR-003, FR-013, FR-014, FR-017;
+      # contracts/ledbalk.md §1
+      # Kiest het patroon van led 1: de bovenste regel die geldt, wint. Start led_knipperen alleen als
       # het patroon of de helderheid veranderd is.
       - id: led_patroon_kiezen
         then:
@@ -1628,12 +1726,12 @@ packages:
               else if (actief & ${bits_waarschuwing}) patroon = ${led_patroon_waarschuwing};
               else if (actief & ${bits_storing}) patroon = ${led_patroon_storing};
               else if (id(g_opstarten)) patroon = ${led_patroon_opstarten};
+              // niveau onbekend: paars, ook vóór de storingsmelding (003 FR-017)
+              else if (!${niveau_bruikbaar}) patroon = ${led_patroon_storing};
               else if (!id(g_verbonden)) patroon = ${led_patroon_geen_verbinding};
               else if (${pomp_draait_nu}) patroon = ${led_patroon_pomp};
               else patroon = ${led_patroon_normaal};
-              float pct = id(led_helderheid_pct).state;
-              if (std::isnan(pct)) pct = ${led_helderheid_pct_std};
-              float helderheid = pct / ${pct_schaal};
+              float helderheid = ${led_helderheid_nu};
               if (patroon == ${led_patroon_alarm}) {
                 helderheid = fmaxf(helderheid, ${led_min_helderheid_alarm});
               }
@@ -1665,13 +1763,73 @@ packages:
                   break;
                 case ${led_patroon_pomp}:
                   id(led_knipperen).execute(${led_blauw_r}, ${led_blauw_g}, ${led_blauw_b},
-                      ${led_blauw_w}, helderheid, 0, ${led_pomp_uit_ms});
+                      ${led_blauw_w}, helderheid, ${led_pomp_aan_ms}, ${led_pomp_uit_ms});
                   break;
                 default:
-                  id(led_knipperen).execute(${led_groen_r}, ${led_groen_g}, ${led_groen_b},
-                      ${led_groen_w}, helderheid, ${led_normaal_aan_ms}, ${led_normaal_uit_ms});
+                  id(led_knipperen).execute(${led_blauw_r}, ${led_blauw_g}, ${led_blauw_b},
+                      ${led_blauw_w}, helderheid, 0, ${led_normaal_uit_ms});
                   break;
               }
+
+      # 003 FR-004, FR-005, FR-006, FR-007, FR-008, FR-010, FR-011; data-model §3,
+      # contracts/ledbalk.md §2
+      # De niveaubalk (led 2-6). Twee stappen: eerst het aantal brandende leds berekenen, daarna
+      # alleen bij een verandering de leds zetten. Elke seconde vanuit status_bijwerken.
+      - id: niveaubalk_bijwerken
+        then:
+          - if:
+              # Stap 1, de berekening. Led k+1 brandt vanaf grens k = k x alarmdrempel / stappen,
+              # en gaat pas uit als de vulgraad de herstelmarge onder die grens is gezakt. De
+              # grenzen lopen op, dus de balk is altijd aaneengesloten (003 FR-006).
+              # Waar = er is iets veranderd.
+              condition:
+                lambda: |-
+                  const float v = id(g_vulgraad_pct);
+                  const float drempel = id(g_alarmdrempel_pct);
+                  const float marge = ${niveaubalk_herstelmarge_pct};
+                  // Geen geldig niveau: balk uit, ook tijdens een vastgehouden alarm
+                  // (003 FR-007; constitutie III). De hysterese vervalt dan.
+                  const bool bruikbaar = ${niveau_bruikbaar} && !std::isnan(v);
+                  uint8_t n_aan = 0;
+                  uint8_t n_houd = 0;
+                  for (uint8_t k = 1; bruikbaar && k <= ${niveaubalk_stappen}; k++) {
+                    const float grens = k * drempel / ${niveaubalk_stappen};
+                    if (v >= grens) n_aan++;
+                    if (v >= grens - marge) n_houd++;
+                  }
+                  const uint8_t vorig = id(g_niveaubalk_aantal);
+                  const uint8_t n = std::max(n_aan, std::min(vorig, n_houd));
+                  const float h = ${led_helderheid_nu};
+                  if (n == vorig && h == id(g_niveaubalk_helderheid)) return false;
+                  if (n != vorig) {
+                    ESP_LOGD("${log_tag}", "niveaubalk %u -> %u", (unsigned) vorig, (unsigned) n);
+                  }
+                  id(g_niveaubalk_aantal) = n;
+                  id(g_niveaubalk_helderheid) = h;
+                  return true;
+              # Stap 2, de uitvoering: led 2 .. n+1 blauw, de rest uit. Bij helderheid 0 alles
+              # uit, ook bij een alarm (de minimale alarmhelderheid geldt alleen voor led 1).
+              then:
+                - lambda: |-
+                    light::LightState *const leds[${niveaubalk_stappen}] = {
+                        id(niveauled_2), id(niveauled_3), id(niveauled_4), id(niveauled_5),
+                        id(niveauled_6)};
+                    const uint8_t n = id(g_niveaubalk_aantal);
+                    const float h = id(g_niveaubalk_helderheid);
+                    for (uint8_t i = 0; i < ${niveaubalk_stappen}; i++) {
+                      if (i < n && h > 0) {
+                        auto call = leds[i]->turn_on();
+                        call.set_rgbw(${led_blauw_r}, ${led_blauw_g}, ${led_blauw_b},
+                                      ${led_blauw_w});
+                        call.set_brightness(h);
+                        call.set_transition_length(0);
+                        call.perform();
+                      } else {
+                        auto call = leds[i]->turn_off();
+                        call.set_transition_length(0);
+                        call.perform();
+                      }
+                    }
 
   # -------------------------------------------------------------------------------------------
   # ---- 8. Gebeurtenissen en diagnose ----

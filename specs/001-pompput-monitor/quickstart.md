@@ -25,7 +25,7 @@ Voer alle commando's uit in PowerShell, vanuit de map van de repository.
   - een notify-service, bijvoorbeeld de Companion-app (`notify.mobile_app_<telefoon>`);
   - `packages` ingeschakeld in `configuration.yaml`.
 - **Hardware** volgens [hardware.md](contracts/hardware.md): XIAO ESP32C3 met antenne,
-  HC-SR04, ACS712, RGBW-led, weerstanden, een 5 V USB-C-adapter, een USB-C-datakabel,
+  HC-SR04, ACS712, zes RGBW-leds (SK6812) met een diode 1N4001 en een elko van 100 µF, weerstanden, een 5 V USB-C-adapter, een USB-C-datakabel,
   en een testbak of emmer.
 - **Voor de bankproef van de stroommeting**: een ACS712 in een **veilig afgesloten**
   testsnoer, met een bekende belasting (bijvoorbeeld een waterkoker of de pomp). Laat dit doen
@@ -64,8 +64,8 @@ Voer alle commando's uit in PowerShell, vanuit de map van de repository.
    - Lukt de verbinding niet: houd **B** (BOOT) ingedrukt, druk kort op **R** (RESET), laat
      B los, en probeer opnieuw. Druk na het flashen op R.
    - **Verwacht** in het log: het opstarten, de herstartreden en de verbinding met WiFi.
-     Bij de put: een witte led, en het apparaat blijft stil. Zolang het apparaat niet is
-     ingesteld, knippert de led paars.
+     Bij de put: led 1 wit en de balk (led 2–6) uit, en het apparaat blijft stil. Zolang het
+     apparaat niet is ingesteld, knippert led 1 paars.
 6. Latere updates gaan via WiFi:
    `.venv\Scripts\esphome run esphome/pompput.yaml --device pompput.local`. Het log lees je met
    `.venv\Scripts\esphome logs esphome/pompput.yaml`.
@@ -81,7 +81,7 @@ Voer alle commando's uit in PowerShell, vanuit de map van de repository.
 3. Zet `homeassistant/packages/pompput.yaml` in de map `packages` van HA. Vervang elke
    `REPLACE_ME` door je notify-service, en herstart HA.
 4. Vul Afstand leeg, Afstand vol en Inschakelniveau in.
-   **Verwacht**: binnen 1 minuut is de status `normaal` en flitst de led groen; het apparaat
+   **Verwacht**: binnen 1 minuut is de status `normaal` en brandt led 1 continu blauw; het apparaat
    blijft stil. "Niet ingesteld" wordt hersteld (FR-023).
 5. Voer een ongeldige combinatie in, bijvoorbeeld een Afstand vol die groter is dan de
    Afstand leeg min 10.
@@ -93,11 +93,14 @@ Voer alle commando's uit in PowerShell, vanuit de map van de repository.
 
 ## 4. Bankvalidatie (hardware-gate)
 
+De scenario's van de ledbalk (led 2–6, en led 1 bij een onbekend niveau) staan in
+[003 quickstart](../003-niveau-ledbalk/quickstart.md) §4.
+
 **Eerst de hardware controleren** (research, Open punten; leg de uitkomsten vast):
 - **TRIG op 3,3 V**: Afstand (ruw) geeft kloppende waarden.
-- **Kleurvolgorde van de led**: bij "pomp draait" is de led blauw en niet groen; pas anders
+- **Kleurvolgorde van de led**: bij "normaal" is led 1 blauw en niet groen of wit; pas anders
   `channel_colors` aan.
-- **Led-data op 3,3 V met diode**: de led reageert betrouwbaar.
+- **Led-data op 3,3 V met diode**: alle zes leds reageren betrouwbaar.
 - **ACS712 in rust**: de Offset stroomsensor is ongeveer 1,25 V. Noteer ook Pompstroom met en
   zonder belasting.
 
@@ -108,29 +111,29 @@ Stel voor de tests tijdelijk kortere tijden in waar dat staat. Zet ze daarna ter
 | 1 | Niveau aflezen | Houd een plank op bekende afstanden onder de sensor, of gebruik een gevulde bak | Waterhoogte en vulgraad in HA, ≤ 10 s oud, afwijking ≤ 2 cm | US1, FR-001/002/003, SC-001 |
 | 2 | Uitschieter | Haal een hand kort (< 1 s) door de bundel | Geen sprong in het niveau, geen melding | FR-004 |
 | 3 | Onmogelijke sprong | Zet tijdelijk Wachttijd sensorstoring op 30 s. Houd iets op 10 cm voor de sensor. Haal het **binnen 5 s** weg nadat Niveausensor storing aan gaat (blijft het staan, dan wordt het ingeleerd, zie #29). Druk daarna op "Niveaumeting opnieuw starten" | Niveau "onbekend" na 30 s, **geen** hoogwater, Niveausensor storing na de wachttijd. Na het wegnemen weer een geldig niveau en de storing hersteld. Na de knop: `niveaumeting_herstart` (knop), en binnen ongeveer 5 s weer een geldig niveau | FR-005, FR-016, R6 |
-| 4 | Hoogwater | Breng het niveau boven de alarmdrempel en houd het > 30 s vast. Zet in het pakket tijdelijk `repeat: 2` | Hoogwater aan; HA-melding met de oorzaak, het niveau, de pomp en "sinds"; na 2 min een herinnering; de led snel rood, **binnen 5 s** na het actief worden | US2, FR-012/018/019/020, SC-003, SC-009 |
+| 4 | Hoogwater | Breng het niveau boven de alarmdrempel en houd het > 30 s vast. Zet in het pakket tijdelijk `repeat: 2` | Hoogwater aan; HA-melding met de oorzaak, het niveau, de pomp en "sinds"; na 2 min een herinnering; led 1 snel rood, **binnen 5 s** na het actief worden | US2, FR-012/018/019/020, SC-003, SC-009 |
 | 5 | Golf | Niveau < 30 s boven de drempel | Geen alarm | US2 scen. 2 |
-| 6 | Herstel en hysterese | Zak eerst tot net onder de drempel, daarna tot 5 procentpunt eronder | Bij net onder de drempel blijft het alarm staan. Bij 5 procentpunt eronder: herstelmelding in HA, groene led | FR-021 |
-| 7 | Vasthouden | Maak meten onmogelijk tijdens een actief alarm: koppel de ECHO-draad los, of dek af met iets dat geen echo geeft, zoals zacht schuim. Controleer dat Afstand (ruw) onbekend is | Het alarm blijft actief; na de wachttijd komt er een storing bij; de led blijft rood | FR-022, FR-005 |
-| 8 | Pomp aan en uit | Zet de belasting 10 s aan, dan uit | Pomp binnen 5 s aan en uit; `pomp_start` en `pomp_stop`; looptijd ≈ 10 s; "Pompput pompstarts 24 uur" +1; de led blauw tijdens het pompen | US3, FR-006/008/009, SC-002 |
+| 6 | Herstel en hysterese | Zak eerst tot net onder de drempel, daarna tot 5 procentpunt eronder | Bij net onder de drempel blijft het alarm staan. Bij 5 procentpunt eronder: herstelmelding in HA, led 1 continu blauw | FR-021 |
+| 7 | Vasthouden | Maak meten onmogelijk tijdens een actief alarm: koppel de ECHO-draad los, of dek af met iets dat geen echo geeft, zoals zacht schuim. Controleer dat Afstand (ruw) onbekend is | Het alarm blijft actief; na de wachttijd komt er een storing bij; led 1 blijft rood | FR-022, FR-005 |
+| 8 | Pomp aan en uit | Zet de belasting 10 s aan, dan uit | Pomp binnen 5 s aan en uit; `pomp_start` en `pomp_stop`; looptijd ≈ 10 s; "Pompput pompstarts 24 uur" +1; led 1 knippert blauw 1 s / 1 s tijdens het pompen | US3, FR-006/008/009, SC-002 |
 | 9 | Stroompiek | Belasting < 2 s aan | Geen pompstart | FR-011 |
-| 10 | Pomp start niet | Niveau boven inschakelniveau + 5 cm, zonder belasting; 2 min wachten | Waarschuwing "pomp start niet"; oranje led; herstel zodra de belasting aangaat | US4 scen. 1/4, FR-013 |
+| 10 | Pomp start niet | Niveau boven inschakelniveau + 5 cm, zonder belasting; 2 min wachten | Waarschuwing "pomp start niet"; led 1 oranje; herstel zodra de belasting aangaat | US4 scen. 1/4, FR-013 |
 | 11 | Pompt niet af | Belasting aan, niveau gelijk houden, 3 min wachten; daarna in een volgende beurt het niveau ≥ 2 cm laten zakken | Waarschuwing "pomp pompt niet af"; na de goede beurt hersteld | US4 scen. 2/4, FR-014 |
 | 12 | Draait te lang | Zet tijdelijk Maximale looptijd pomp op 1 min; belasting > 1 min aan | Waarschuwing "pomp draait te lang"; hersteld als de pomp stopt | US4 scen. 3, FR-015 |
 | 13 | Stroomsensor los | Onderbreek de voeding van de ACS712 | Na ongeveer 10 s Stroomsensor storing; Pomp "onbekend"; Offset stroomsensor ver buiten 0,9–1,6 V; herstel 10 s na het terugzetten | FR-016 |
 | 14 | (vervallen) | — | De zoemer en het stilzetten zijn vervallen met specs/002-zoemer-verwijderen | — |
-| 16 | Geen verbinding | Haal het apparaat uit HA, of zet de WiFi-router uit | De led flitst wit (als er geen meldingen zijn); meten en lokale meldingen werken door. In HA na 5 min "Pompput onbereikbaar" | FR-017, FR-027, SC-009 |
+| 16 | Geen verbinding | Haal het apparaat uit HA, of zet de WiFi-router uit | Led 1 flitst wit (als er geen meldingen zijn); meten en lokale meldingen werken door. In HA na 5 min "Pompput onbereikbaar" | FR-017, FR-027, SC-009 |
 | 17 | Herstel verbinding | Zet de verbinding terug | Binnen ongeveer 1 min zijn de states actueel. Gegevens uit de onderbreking worden **niet** nagezonden | FR-010 |
 | 18 | Herstart zonder HA | Verbinding uit; apparaat stroomloos en weer aan | Binnen 1 min meet en bewaakt het apparaat, met de bewaarde instellingen | FR-024/025, SC-005, SC-008 |
 | 19 | Pomp onafhankelijk | XIAO stroomloos | De belasting of pomp werkt gewoon door de ACS712 heen | FR-007, SC-007 |
 | 20 | Gebeurtenissen | Bekijk na de stappen 3–18 het logboek | Herstart, meldingen, pompbeurten, afgewezen instellingen en de herstarts van de niveaumeting staan erin; "Laatste gebeurtenis" geeft de details | FR-026 |
 | 21 | Langdurig netwerkverlies | WiFi > 20 min uit, terwijl er een melding actief is | Geen herstart (Uptime loopt door, Herstartreden is ongewijzigd); de melding en de lokale signalering blijven | constitutie (Independent operation) |
 | 22 | Update via WiFi | `esphome run … --device pompput.local` | De update slaagt zonder USB; de instellingen blijven bewaard | R2, R15 |
-| 23 | Led-helderheid | Zet Led-helderheid op 0 %, dan een alarm | Zonder melding is de led uit; bij een alarm brandt hij toch, op 10 % | FR-028 |
+| 23 | Led-helderheid | Zet Led-helderheid op 0 %, dan een alarm | Zonder melding zijn alle leds uit; bij een alarm brandt led 1 toch, op 10 % | FR-028 |
 | 24 | Stroomdip tijdens pompen | Belasting > 5 s aan, dan < 2 s onderbreken, dan weer aan | Pomp blijft aan. Geen extra `pomp_stop` of `pomp_start`. De looptijd telt door | FR-009, FR-011 |
 | 25 | Stroomsensor los tijdens waarschuwing | Veroorzaak "pomp start niet" (#10). Onderbreek dan de voeding van de ACS712 | Pomp "onbekend" en Stroomsensor storing erbij. "Pomp start niet" blijft actief, zonder herstelmelding | FR-013, FR-016 |
 | 26 | Herstel zonder pomp | Veroorzaak #10. Beweeg zonder belasting de plank langzaam (≤ 2 cm/s) weg, tot onder inschakelniveau + marge − 2 cm | "Pomp start niet" hersteld, met herstelmelding | FR-013, FR-021 |
-| 27 | Geometrie wijzigen | Wijzig Afstand leeg met een geldige waarde | `niveaumeting_herstart` met oorzaak `instelling`. Het niveau is kort onbekend en binnen ongeveer 5 s weer geldig | FR-023, FR-026 |
+| 27 | Geometrie wijzigen | Wijzig Afstand leeg met een geldige waarde | `niveaumeting_herstart` met oorzaak `instelling`. Het niveau is kort onbekend en binnen ongeveer 5 s weer geldig. Led 1 knippert kort paars en de balk is uit zolang het niveau onbekend is; daarna weer blauw (003 FR-017) | FR-023, FR-026 |
 | 28 | Herstel na blinde periode | Zet Wachttijd sensorstoring op 30 s. Koppel de ECHO-draad los (Afstand (ruw) wordt onbekend), zet de plank > 10 cm verder, wacht op Niveausensor storing en sluit de draad weer aan | Binnen ongeveer 5 s een geldig niveau op de nieuwe hoogte, `niveaumeting_herstart` (oorzaak `automatisch`), en de storing hersteld | FR-016, FR-022, R6 |
 | 29 | Hindernis bij inleren | Houd iets op 10 cm voor de sensor en druk op "Niveaumeting opnieuw starten" | Na ongeveer 5 s een geldig niveau op die hoogte. Ligt dat boven de alarmdrempel, dan volgt na de wachttijd een hoogwater-alarm (bekende beperking, spec randgeval) | FR-005, randgeval |
 | 30 | Buiten het bereik | Zet Wachttijd sensorstoring tijdelijk op 30 s. Zet daarna, **in deze volgorde**, Afstand vol op 10 cm, Inschakelniveau op 5 cm en Afstand leeg op 30 cm (in een andere volgorde weigert het apparaat de combinatie). Houd de plank op 60 cm. Herhaal met een hand plat op de sensor. Zet daarna de oude waarden terug, met Afstand leeg als eerste | Afstand (ruw) is onbekend en het niveau blijft onbekend, want inleren lukt niet. Na 30 s komt Niveausensor storing, en er komt **geen** hoogwater. Met de hand gebeurt hetzelfde | FR-005, FR-016 |
