@@ -103,9 +103,9 @@ De meldingen worden bij elke verandering gepubliceerd, binnen de seconde-cyclus.
 
 | Domein | YAML-id | Naam | Entity-id | Gedrag | Spec |
 |---|---|---|---|---|---|
-| `switch` | `zoemer` | Zoemer | `switch.pompput_zoemer` | uit = de zoemer klinkt nooit (alleen de opstartpiep); bewaard in flash, standaard aan | FR-028 |
-| `button` | `zoemer_stil` | Zoemer stil | `button.pompput_zoemer_stil` | stil tot er een nieuwe melding bijkomt; zelfde gedrag als de BOOT-knop | FR-028 |
 | `button` | `niveaumeting_herstart` | Niveaumeting opnieuw starten | `button.pompput_niveaumeting_opnieuw_starten` | de niveaustatus gaat naar ONBEKEND en daarna wordt opnieuw ingeleerd; gebeurtenis `niveaumeting_herstart` (oorzaak `knop`); `entity_category: config` | R6 |
+
+De schakelaar Zoemer en de knop Zoemer stil zijn vervallen met `specs/002-zoemer-verwijderen`.
 
 ## Home Assistant-pakket (`homeassistant/packages/pompput.yaml`)
 

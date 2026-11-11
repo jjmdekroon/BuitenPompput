@@ -25,7 +25,7 @@ Voer alle commando's uit in PowerShell, vanuit de map van de repository.
   - een notify-service, bijvoorbeeld de Companion-app (`notify.mobile_app_<telefoon>`);
   - `packages` ingeschakeld in `configuration.yaml`.
 - **Hardware** volgens [hardware.md](contracts/hardware.md): XIAO ESP32C3 met antenne,
-  HC-SR04, ACS712, piëzo, RGBW-led, weerstanden, een 5 V USB-C-adapter, een USB-C-datakabel,
+  HC-SR04, ACS712, RGBW-led, weerstanden, een 5 V USB-C-adapter, een USB-C-datakabel,
   en een testbak of emmer.
 - **Voor de bankproef van de stroommeting**: een ACS712 in een **veilig afgesloten**
   testsnoer, met een bekende belasting (bijvoorbeeld een waterkoker of de pomp). Laat dit doen
@@ -64,8 +64,8 @@ Voer alle commando's uit in PowerShell, vanuit de map van de repository.
    - Lukt de verbinding niet: houd **B** (BOOT) ingedrukt, druk kort op **R** (RESET), laat
      B los, en probeer opnieuw. Druk na het flashen op R.
    - **Verwacht** in het log: het opstarten, de herstartreden en de verbinding met WiFi.
-     Bij de put: één opstartpiep en een witte led. Zolang het apparaat niet is ingesteld,
-     knippert de led paars, met 2 korte piepjes.
+     Bij de put: een witte led, en het apparaat blijft stil. Zolang het apparaat niet is
+     ingesteld, knippert de led paars.
 6. Latere updates gaan via WiFi:
    `.venv\Scripts\esphome run esphome/pompput.yaml --device pompput.local`. Het log lees je met
    `.venv\Scripts\esphome logs esphome/pompput.yaml`.
@@ -81,8 +81,8 @@ Voer alle commando's uit in PowerShell, vanuit de map van de repository.
 3. Zet `homeassistant/packages/pompput.yaml` in de map `packages` van HA. Vervang elke
    `REPLACE_ME` door je notify-service, en herstart HA.
 4. Vul Afstand leeg, Afstand vol en Inschakelniveau in.
-   **Verwacht**: binnen 1 minuut is de status `normaal`, flitst de led groen en klinkt er een
-   korte herstelpiep. "Niet ingesteld" wordt hersteld (FR-023).
+   **Verwacht**: binnen 1 minuut is de status `normaal` en flitst de led groen; het apparaat
+   blijft stil. "Niet ingesteld" wordt hersteld (FR-023).
 5. Voer een ongeldige combinatie in, bijvoorbeeld een Afstand vol die groter is dan de
    Afstand leeg min 10.
    **Verwacht**: de waarde springt terug, en de gebeurtenis `instelling_afgewezen` komt in het
@@ -108,18 +108,17 @@ Stel voor de tests tijdelijk kortere tijden in waar dat staat. Zet ze daarna ter
 | 1 | Niveau aflezen | Houd een plank op bekende afstanden onder de sensor, of gebruik een gevulde bak | Waterhoogte en vulgraad in HA, ≤ 10 s oud, afwijking ≤ 2 cm | US1, FR-001/002/003, SC-001 |
 | 2 | Uitschieter | Haal een hand kort (< 1 s) door de bundel | Geen sprong in het niveau, geen melding | FR-004 |
 | 3 | Onmogelijke sprong | Zet tijdelijk Wachttijd sensorstoring op 30 s. Houd iets op 10 cm voor de sensor. Haal het **binnen 5 s** weg nadat Niveausensor storing aan gaat (blijft het staan, dan wordt het ingeleerd, zie #29). Druk daarna op "Niveaumeting opnieuw starten" | Niveau "onbekend" na 30 s, **geen** hoogwater, Niveausensor storing na de wachttijd. Na het wegnemen weer een geldig niveau en de storing hersteld. Na de knop: `niveaumeting_herstart` (knop), en binnen ongeveer 5 s weer een geldig niveau | FR-005, FR-016, R6 |
-| 4 | Hoogwater | Breng het niveau boven de alarmdrempel en houd het > 30 s vast. Zet in het pakket tijdelijk `repeat: 2` | Hoogwater aan; HA-melding met de oorzaak, het niveau, de pomp en "sinds"; na 2 min een herinnering; de led snel rood en de zoemer 3× per 10 s, **binnen 5 s** na het actief worden | US2, FR-012/018/019/020, SC-003, SC-009 |
+| 4 | Hoogwater | Breng het niveau boven de alarmdrempel en houd het > 30 s vast. Zet in het pakket tijdelijk `repeat: 2` | Hoogwater aan; HA-melding met de oorzaak, het niveau, de pomp en "sinds"; na 2 min een herinnering; de led snel rood, **binnen 5 s** na het actief worden | US2, FR-012/018/019/020, SC-003, SC-009 |
 | 5 | Golf | Niveau < 30 s boven de drempel | Geen alarm | US2 scen. 2 |
-| 6 | Herstel en hysterese | Zak eerst tot net onder de drempel, daarna tot 5 procentpunt eronder | Bij net onder de drempel blijft het alarm staan. Bij 5 procentpunt eronder: herstelmelding in HA, korte piep, groene led | FR-021 |
+| 6 | Herstel en hysterese | Zak eerst tot net onder de drempel, daarna tot 5 procentpunt eronder | Bij net onder de drempel blijft het alarm staan. Bij 5 procentpunt eronder: herstelmelding in HA, groene led | FR-021 |
 | 7 | Vasthouden | Maak meten onmogelijk tijdens een actief alarm: koppel de ECHO-draad los, of dek af met iets dat geen echo geeft, zoals zacht schuim. Controleer dat Afstand (ruw) onbekend is | Het alarm blijft actief; na de wachttijd komt er een storing bij; de led blijft rood | FR-022, FR-005 |
 | 8 | Pomp aan en uit | Zet de belasting 10 s aan, dan uit | Pomp binnen 5 s aan en uit; `pomp_start` en `pomp_stop`; looptijd ≈ 10 s; "Pompput pompstarts 24 uur" +1; de led blauw tijdens het pompen | US3, FR-006/008/009, SC-002 |
 | 9 | Stroompiek | Belasting < 2 s aan | Geen pompstart | FR-011 |
-| 10 | Pomp start niet | Niveau boven inschakelniveau + 5 cm, zonder belasting; 2 min wachten | Waarschuwing "pomp start niet"; oranje led; zoemer 1× per 60 s; herstel zodra de belasting aangaat | US4 scen. 1/4, FR-013 |
+| 10 | Pomp start niet | Niveau boven inschakelniveau + 5 cm, zonder belasting; 2 min wachten | Waarschuwing "pomp start niet"; oranje led; herstel zodra de belasting aangaat | US4 scen. 1/4, FR-013 |
 | 11 | Pompt niet af | Belasting aan, niveau gelijk houden, 3 min wachten; daarna in een volgende beurt het niveau ≥ 2 cm laten zakken | Waarschuwing "pomp pompt niet af"; na de goede beurt hersteld | US4 scen. 2/4, FR-014 |
 | 12 | Draait te lang | Zet tijdelijk Maximale looptijd pomp op 1 min; belasting > 1 min aan | Waarschuwing "pomp draait te lang"; hersteld als de pomp stopt | US4 scen. 3, FR-015 |
-| 13 | Stroomsensor los | Onderbreek de voeding van de ACS712 | Na ongeveer 10 s Stroomsensor storing; Pomp "onbekend"; Offset stroomsensor ver buiten 0,9–1,6 V; 2 piepjes; herstel 10 s na het terugzetten | FR-016 |
-| 14 | Zoemer stil | Druk tijdens een alarm op de BOOT-knop; veroorzaak daarna een tweede melding. Herhaal met de HA-knop "Zoemer stil" | Bevestigingspiep en 2× witte flits; daarna stil, de led blijft rood. Bij de nieuwe melding klinkt de zoemer weer | FR-028 |
-| 15 | Zoemer uit | Zet de HA-schakelaar Zoemer uit, veroorzaak een alarm; herstart | Geen geluid (alleen de opstartpiep); de led is rood; na de herstart staat de schakelaar nog uit | FR-028 |
+| 13 | Stroomsensor los | Onderbreek de voeding van de ACS712 | Na ongeveer 10 s Stroomsensor storing; Pomp "onbekend"; Offset stroomsensor ver buiten 0,9–1,6 V; herstel 10 s na het terugzetten | FR-016 |
+| 14 | (vervallen) | — | De zoemer en het stilzetten zijn vervallen met specs/002-zoemer-verwijderen | — |
 | 16 | Geen verbinding | Haal het apparaat uit HA, of zet de WiFi-router uit | De led flitst wit (als er geen meldingen zijn); meten en lokale meldingen werken door. In HA na 5 min "Pompput onbereikbaar" | FR-017, FR-027, SC-009 |
 | 17 | Herstel verbinding | Zet de verbinding terug | Binnen ongeveer 1 min zijn de states actueel. Gegevens uit de onderbreking worden **niet** nagezonden | FR-010 |
 | 18 | Herstart zonder HA | Verbinding uit; apparaat stroomloos en weer aan | Binnen 1 min meet en bewaakt het apparaat, met de bewaarde instellingen | FR-024/025, SC-005, SC-008 |
@@ -201,7 +200,7 @@ Constitutie, gate 3. Het overzicht requirement → YAML-element staat in
 | FR-025 | §4 #18 |
 | FR-026 | §4 #20, #27, #28 |
 | FR-027 | §4 #4, #10, #13, #16 |
-| FR-028 | §4 #14, #15, #23 |
+| FR-028 | §4 #23 |
 | Randgeval "niet ingesteld" | §2 stap 5, §3 stappen 2 en 4 |
 | Randgeval "ongeldige instellingen" | §3 stappen 5–6 |
 | Randgeval "vervuilde afstandsmeter" en "water tot aan de sensor" | §4 #3, #28, #29 |

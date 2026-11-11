@@ -1,54 +1,3 @@
-<!--
-Sync Impact Report
-==================
-Version change: 1.0.0 → 2.0.0
-Bump rationale: MAJOR. By decision of the maintainer (2026-11-11) the project moves from
-hand-written Arduino/PlatformIO firmware with MQTT to ESPHome, the same approach as the sibling
-project Buitenlamp. Principle I (deployment target) and principle IV (automated host-side tests)
-are redefined in a backward-incompatible way, and the build tool, project layout, Home Assistant
-integration and quality gates change accordingly.
-
-Modified principles (old title → new title):
-- I. Arduino Is the Deployment Target → I. ESPHome Is the Deployment Target (REDEFINED: ESPHome
-  with the esp-idf framework on the Seeed XIAO ESP32C3, pinned version, native API, OTA)
-- II. Predictable Embedded Behavior → II. Non-Blocking, Bounded Automations (restated in ESPHome
-  terms; adds millis() rollover rule, no own ISRs, no heap allocation in repeated lambdas)
-- III. Safe Hardware Interaction → III. Safe, Monitoring-Only Hardware Interaction (pump
-  control rule replaced by "never controls the pump"; invalid/stale data, alarm hold, ESPHome
-  input filters, watchdog stays enabled)
-- IV. Testable Control Logic → IV. Declarative, Traceable Logic (REDEFINED: logic in named
-  scripts/automations with requirement ids; host-side unit tests no longer required; every
-  decision rule covered by an on-device scenario in quickstart.md)
-- V. Simple and Observable Firmware → V. Explicit, Simple and Observable Configuration
-  (substitutions block, secrets.yaml, pinned versions, YAGNI, faults visible in Home Assistant
-  and the log)
-
-Modified sections:
-- Platform Constraints → Embedded Platform Constraints: rewritten for ESPHome (language,
-  board/framework, build with the ESPHome CLI, project layout, encrypted native API instead of
-  MQTT, OTA, reboot timeouts, logging, mains-measurement safety)
-- Development Workflow → Development Workflow & Quality Gates: five ordered gates (compile,
-  resource, traceability, hardware, review); recording unverified hardware behavior is kept
-- Governance: amendment procedure via /speckit-constitution, versioning, compliance review
-
-Added sections: none (sections renamed and rewritten, see above)
-Removed sections: none
-
-Resolved TODO: RATIFICATION_DATE = 2026-11-03, the day version 1.0.0 was adopted from the
-template (per the previous Sync Impact Report and its Last Amended date).
-
-Templates: plan-template.md, spec-template.md, tasks-template.md and the speckit commands read
-the constitution at runtime ✅ no edits needed.
-
-Follow-up (dependent artifacts, not changed by this amendment):
-- specs/001-pompput-monitor: spec.md is technology-neutral and still valid; plan.md,
-  research.md (R1–R4, R11–R13), data-model.md, contracts/mqtt-homeassistant.md, quickstart.md,
-  tasks.md and verificatie.md assume v1.0.0 (Arduino + MQTT + unit tests) and MUST be
-  re-planned with /speckit-plan and /speckit-tasks.
-- The Arduino/PlatformIO implementation (platformio.ini, include/, lib/, src/, test/) no longer
-  matches principle I and is to be replaced in the re-planned tasks.
--->
-
 # Buitenpomp Constitution
 
 ## Core Principles
@@ -94,7 +43,7 @@ and delays alarms; an unattended device fails silently when memory fragments.
 - The device only monitors. It MUST NOT have any output that can switch, interrupt or
   otherwise influence the pump, and the pump MUST keep working on its own float switch when
   the monitor fails or is unpowered.
-- Every output (ultrasonic trigger, buzzer, status LED) MUST be in a defined, safe state from
+- Every output (ultrasonic trigger, status LED) MUST be in a defined, safe state from
   the earliest point at boot (`restore_mode: ALWAYS_OFF` or the component's equivalent).
 - Sensor values MUST be interpreted with explicit units and validity limits before they
   influence a decision. Invalid, implausible or stale data MUST lead to an "unknown" state and
@@ -162,8 +111,8 @@ every tunable makes it safe to change, and visible faults make an unattended dev
   git-ignored. There is no host-side test folder.
 - **Home Assistant**: integration uses ESPHome's native API with encryption enabled. All
   communication stays inside the home network.
-- **Independent operation**: measurement, alert evaluation and local indication (LED and
-  buzzer) MUST keep working without WiFi, Home Assistant or a serial monitor. ESPHome's
+- **Independent operation**: measurement, alert evaluation and local indication (the status
+  LED) MUST keep working without WiFi, Home Assistant or a serial monitor. ESPHome's
   automatic reboot timeouts (`wifi: reboot_timeout`, `api: reboot_timeout`) MUST be disabled
   unless the plan justifies otherwise, so losing the network never resets an active alarm.
 - **Mains**: any part on mains voltage (the ACS712 current sensor) is measurement only, MUST be
@@ -209,4 +158,4 @@ carry a short comment explaining why.
   design and again after it; `/speckit-analyze` MUST flag violations as CRITICAL; deviations
   are allowed only when justified in the plan's Complexity Tracking table.
 
-**Version**: 2.0.0 | **Ratified**: 2026-11-03 | **Last Amended**: 2026-11-11
+**Version**: 2.0.1 | **Ratified**: 2026-11-03 | **Last Amended**: 2026-11-11

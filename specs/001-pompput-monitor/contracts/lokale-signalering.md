@@ -1,13 +1,13 @@
-# Contract: Signalering ter plaatse (led en zoemer)
+# Contract: Signalering ter plaatse (statusled)
 
-**Status**: ontwerp. Dit beschrijft wat de gebruiker bij de put ziet en hoort (FR-027, FR-028,
-SC-009). Het gedrag is ongewijzigd sinds de overstap naar ESPHome (2026-11-11).
-- **Uitvoering**: de scripts `led_patroon_kiezen` en `zoemer_patroon_kiezen` vertalen de
-  toestand naar een patroon.
+**Status**: ontwerp. Dit beschrijft wat de gebruiker bij de put ziet (FR-027, FR-028 voor de
+helderheid, SC-009; 002 FR-002, FR-003). De zoemer, het stilzetten en de functie van de
+BOOT-knop zijn vervallen met
+[specs/002-zoemer-verwijderen](../../002-zoemer-verwijderen/spec.md); ter plaatse signaleert
+alleen nog de statusled.
+- **Uitvoering**: het script `led_patroon_kiezen` vertaalt de toestand naar een patroon.
 - **Led**: elk patroon speelt via het generieke script `led_knipperen`, met niet-blokkerende
   `delay`s.
-- **Zoemer**: elk patroon speelt via de scripts `zoemer_herhalen` en `zoemer_eenmalig`, ook
-  met niet-blokkerende `delay`s.
 - **Controle**: met [quickstart.md](../quickstart.md) §4.
 
 ## Statusled (RGBW)
@@ -29,29 +29,3 @@ Er is steeds één patroon actief. De **bovenste regel die geldt, wint**. De hel
   op 10 %, zodat een alarm nooit onzichtbaar is.
 - Het gekozen patroon is binnen 1 s na een verandering van toestand zichtbaar. Dat is ruim
   binnen SC-009.
-
-## Zoemer (passieve piëzo, PWM 2,7 kHz, duty 50 %)
-
-| Toestand | Patroon |
-|---|---|
-| Opstarten | 1× 100 ms (zelftest) |
-| **Alarm** actief | 3× (150 ms toon / 150 ms stil), elke 10 s herhaald |
-| **Waarschuwing** actief (zonder alarm) | 1× 300 ms, elke 60 s herhaald |
-| Storing | 2× 100 ms, **eenmalig** bij het ontstaan |
-| Melding hersteld (alles weer normaal) | 1× 50 ms |
-| Overig | stil |
-
-- Het eerste patroon klinkt binnen 1 s na het actief worden van een melding (SC-009).
-- **Zoemer uit** (HA-switch `zoemer` = OFF): nooit geluid, behalve de zelftest bij het
-  opstarten.
-
-## Stilzetten (FR-028)
-
-- **Bediening**: de **BOOT-knop** (D9) kort indrukken (debounce 50 ms), of in HA op de button
-  `zoemer_stil` drukken.
-- **Bevestiging**: 1× een korte piep van 50 ms, en de led knippert 2× wit.
-- **Gevolg**: de zoemer is stil zolang de actieve meldingen een **deelverzameling** zijn van
-  de meldingen op het moment van stilzetten. Komt er een **nieuwe** melding bij, dan klinkt de
-  zoemer weer.
-- **Led**: die blijft altijd de werkelijke toestand tonen, ook als de zoemer stil staat.
-- **Na een herstart** is "stil" weer opgeheven, want het wordt niet bewaard.

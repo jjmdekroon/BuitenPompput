@@ -3,12 +3,12 @@
 Bewaking van een buitenpompput. Een HC-SR04 meet het waterniveau, en een ACS712 ziet aan de
 stroom of de pomp draait. Daarmee bepaalt het apparaat zelf de meldingen (hoogwater, pomp start
 niet, pomp pompt niet af, pomp draait te lang, sensorstoringen, niet ingesteld) en geeft alles
-via de versleutelde native API van ESPHome door aan Home Assistant. Een RGBW-led en een
-piëzo-zoemer signaleren ter plaatse, ook zonder Home Assistant. Het apparaat stuurt de pomp
-**nooit** aan.
+via de versleutelde native API van ESPHome door aan Home Assistant. Een RGBW-led signaleert
+ter plaatse, ook zonder Home Assistant. Het apparaat stuurt de pomp **nooit** aan.
 
 Ontwerp en eisen: [specs/001-pompput-monitor/](specs/001-pompput-monitor/) (spec, plan,
-data-model, contracten, quickstart, verificatie).
+data-model, contracten, quickstart, verificatie) en
+[specs/002-zoemer-verwijderen/](specs/002-zoemer-verwijderen/) (de zoemer is vervallen).
 
 > **⚠️ Veiligheid: 230 V**
 >
@@ -29,7 +29,7 @@ data-model, contracten, quickstart, verificatie).
 | Framework | `esp-idf` (de eigen ESP-IDF-toolchain van ESPHome; PlatformIO is niet nodig) |
 | Board | Seeed Studio XIAO ESP32C3 (`esp32: variant: esp32c3`) |
 | Koppeling met HA | ESPHome native API met versleuteling; updates via WiFi (OTA) met dezelfde sleutel |
-| Componenten | `ultrasonic`, `adc`, `ct_clamp`, `esp32_rmt_led_strip`, `ledc`, `template`, `globals`, `script`, `interval`, `debug`, `wifi_signal`, `uptime` |
+| Componenten | `ultrasonic`, `adc`, `ct_clamp`, `esp32_rmt_led_strip`, `template`, `globals`, `script`, `interval`, `debug`, `wifi_signal`, `uptime` |
 | Externe componenten | geen |
 
 Het hele apparaat staat in één bestand: [esphome/pompput.yaml](esphome/pompput.yaml), met
@@ -39,8 +39,8 @@ signalering, gebeurtenissen).
 **Pinnen en elektrische aannames**: de gezaghebbende bron is
 [specs/001-pompput-monitor/contracts/hardware.md](specs/001-pompput-monitor/contracts/hardware.md).
 In de firmware staan de pinnen alleen in het `substitutions:`-blok bovenaan
-[esphome/pompput.yaml](esphome/pompput.yaml) (`pin_trig`, `pin_echo`, `pin_acs712`, `pin_led`,
-`pin_zoemer`, `pin_knop`); wijzig ze altijd op beide plaatsen tegelijk.
+[esphome/pompput.yaml](esphome/pompput.yaml) (`pin_trig`, `pin_echo`, `pin_acs712`,
+`pin_led`); wijzig ze altijd op beide plaatsen tegelijk.
 
 ## Aansluiten
 
@@ -69,11 +69,9 @@ Samenvatting voor het solderen. De gezaghebbende bron blijft
 | RGBW-led (SK6812) | VDD | 5V | — | via een diode (1N4001 of 1N4148); 100 nF naar GND bij de led |
 | RGBW-led (SK6812) | DIN | D4 | 6 | 330 Ω in serie |
 | RGBW-led (SK6812) | GND | GND | — | |
-| Piëzo-zoemer | + | D5 | 7 | 100 Ω in serie |
-| Piëzo-zoemer | − | GND | — | |
-| Knop "zoemer stil" | — | D9 | 9 | de BOOT-knop op het board; een externe knop mag parallel naar GND |
 
-Vrij: D0 (GPIO2), D6 (GPIO21), D7 (GPIO20), D8 (GPIO8), D10 (GPIO10).
+Vrij: D0 (GPIO2), D5 (GPIO7), D6 (GPIO21), D7 (GPIO20), D8 (GPIO8), D10 (GPIO10). De BOOT-knop
+op het board (D9) heeft geen functie in de firmware.
 
 ### Pinnen van de XIAO
 
@@ -86,8 +84,8 @@ Bovenaanzicht, USB-C boven. Controleer de opdruk op je board.
   ACS712 OUT ──▶  D1 │ ●        ● │ GND   → GND-rail: alle onderdelen
   HC-SR04 TRIG ◀─ D2 │ ●        ● │ 3V3     (niet gebruikt)
   HC-SR04 ECHO ─▶ D3 │ ●        ● │ D10     (vrij)
-  led DIN      ◀─ D4 │ ●        ● │ D9      BOOT-knop (op het board)
-  zoemer       ◀─ D5 │ ●        ● │ D8      (vrij)
+  led DIN      ◀─ D4 │ ●        ● │ D9      BOOT-knop (op het board, geen functie)
+          (vrij)  D5 │ ●        ● │ D8      (vrij)
           (vrij)  D6 │ ●        ● │ D7      (vrij)
                      └────────────┘
 ```
@@ -132,19 +130,6 @@ D4 (GPIO6) ──[330 Ω]── DIN
 GND ─────────────────── GND
                                      100 nF tussen VDD en GND, dicht bij de led
 ```
-
-**Piëzo-zoemer (passief).** De firmware maakt de toon (2,7 kHz) met PWM.
-
-```text
-D5 (GPIO7) ──[100 Ω]── piëzo +
-                       piëzo − ── GND
-```
-
-Is het volume te laag, gebruik dan een NPN-transistor (bijvoorbeeld een BC547). Basis via 1 kΩ
-aan D5, emitter aan GND, en de piëzo met 1 kΩ parallel tussen 5 V en de collector.
-
-**Knop "zoemer stil".** Dit is de BOOT-knop op de XIAO (D9), dus er is niets aan te sluiten.
-Een externe knop mag parallel tussen D9 en GND. Houd hem niet ingedrukt tijdens het opstarten.
 
 ### Voeding
 
@@ -208,6 +193,7 @@ esphome/pompput.yaml           het hele apparaat (ESPHome), in genummerde sectie
 esphome/secrets.example.yaml   voorbeeld van de geheimen; secrets.yaml staat in .gitignore
 homeassistant/                 HA-pakket (meldingen, herinneringen, onbereikbaar) en dashboard
 specs/001-pompput-monitor/     spec, plan, research, data-model, contracten, quickstart, taken
+specs/002-zoemer-verwijderen/  het vervallen van de zoemer: spec, plan, taken, verificatie
 requirements.txt               de vastgepinde ESPHome-versie
 ```
 
@@ -246,6 +232,6 @@ het apparaat.
 | blauw, continu | pomp draait |
 | groen, flits per 5 s | normaal |
 
-De BOOT-knop zet de zoemer stil tot er een nieuwe melding bijkomt. Houd de knop **niet**
-ingedrukt tijdens het opstarten, want dan gaat de chip in de downloadmodus. Details:
+De BOOT-knop heeft geen functie in de firmware. Houd hem **niet** ingedrukt tijdens het
+opstarten, want dan gaat de chip in de downloadmodus. Details:
 [contracts/lokale-signalering.md](specs/001-pompput-monitor/contracts/lokale-signalering.md).

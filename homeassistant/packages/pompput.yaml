@@ -5,7 +5,7 @@
 #     packages: !include_dir_named packages
 #
 # Contract: specs/001-pompput-monitor/contracts/esphome-homeassistant.md, sectie
-# "Home Assistant-pakket".
+# "Home Assistant-pakket", en specs/002-zoemer-verwijderen/contracts/wijzigingen-signalering-en-ha.md.
 # De entiteiten van het apparaat komen via de ESPHome-integratie (native API, met de sleutel uit
 # esphome/secrets.yaml). Dit pakket voegt alleen toe wat in Home Assistant moet gebeuren:
 # meldingen op afstand (FR-018, FR-019), herinneringen (repeat, FR-020), herstelmeldingen
@@ -123,7 +123,7 @@ alert:
     skip_first: false
     message: >-
       Home Assistant ontvangt al 5 minuten geen gegevens van de pompput-monitor
-      (geen stroom, geen WiFi of vastgelopen). Bij de put signaleren de led en de zoemer nog wel.
+      (geen stroom, geen WiFi of vastgelopen). Bij de put signaleert de led nog wel.
       Laatst bekend niveau: {{ states('sensor.pompput_vulgraad') }} %
       ({{ states('sensor.pompput_waterhoogte') }} cm).
       Pomp: {{ 'draait' if is_state('binary_sensor.pompput_pomp', 'on') else 'staat stil' }}.
