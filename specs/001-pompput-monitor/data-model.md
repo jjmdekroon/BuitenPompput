@@ -85,8 +85,10 @@ regels. Is dat niet zo, dan is de melding **NIET_INGESTELD** actief.
 | Herstelmarge "pomp start niet" | 2 cm | §5 |
 | Verwerking en meldingen | elke 1 s | R5 |
 | Publicatie waterhoogte en vulgraad | elke 10 s, en direct bij een statuswijziging | FR-003 |
-| Opstarten (witte led) | maximaal 10 s | lokale signalering |
+| Opstarten (led 1 wit) | maximaal 10 s | lokale signalering |
 | Kleurvolgorde led | GRBW (controleren op de bank) | R9 |
+| Aantal leds | 6 in één keten: led 1 statuslampje, led 2–6 niveaubalk | 003 R1, R4 |
+| Niveaubalk | 5 gelijke stappen tot de alarmdrempel; herstelmarge 2 procentpunt | 003 FR-004, FR-008 |
 
 ---
 
@@ -231,12 +233,17 @@ Het apparaat bewaart geen gebeurtenissen. Is er geen verbinding, dan gaan ze ver
 ## 7. Signaleringstoestand (`IndicationState`)
 
 Vervallen met [002](../002-zoemer-verwijderen/data-model.md): de zoemer, "stil" en de
-led-bevestiging.
+led-bevestiging. Uitgebreid met [003](../003-niveau-ledbalk/data-model.md): zes leds, met de
+niveaubalk op led 2–6.
 
 | Veld | Betekenis | In ESPHome |
 |---|---|---|
-| `led_patroon` | volgt uit de apparaatstatus, de pompstatus, de verbinding en "opstarten"; wordt nooit onderbroken | script `led_patroon_kiezen` → script `led_knipperen`; huidige keuze in `g_led_patroon` |
+| `led_patroon` | patroon van led 1; volgt uit de apparaatstatus, de niveaustatus ("niveau onbekend", 003 FR-017), de pompstatus, de verbinding en "opstarten"; wordt nooit onderbroken | script `led_patroon_kiezen` → script `led_knipperen` op partitie `statusled` (led 1); huidige keuze in `g_led_patroon` |
 | `verbonden` | is de API verbonden (voor het led-patroon "geen verbinding") | `g_verbonden`, gezet door `api: on_client_connected` en `on_client_disconnected` |
 | `opstarten` | waar tot de eerste GELDIGE niveaumeting, maximaal 10 s | `g_opstarten` |
+| `niveaubalk_aantal` | aantal brandende balkleds (led 2–6), 0–5; 0 bij een ongeldig niveau | script `niveaubalk_bijwerken`; `g_niveaubalk_aantal` |
+| `niveaubalk_helderheid` | helderheid waarmee de balk het laatst is gezet | `g_niveaubalk_helderheid` |
+
+Niveaubalk en fysieke leds: zie [003 data-model](../003-niveau-ledbalk/data-model.md) §3–§4.
 
 Kleuren, ritmes en prioriteiten: [contracts/lokale-signalering.md](contracts/lokale-signalering.md).

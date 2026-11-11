@@ -6,6 +6,8 @@
 
 **Bijgewerkt**: de piëzo-zoemer, het stilzetten en de BOOT-knopfunctie zijn vervallen met [specs/002-zoemer-verwijderen](../002-zoemer-verwijderen/plan.md). De rest van dit plan beschrijft de toestand van versie 0.2.0.
 
+**Bijgewerkt**: de enkele statusled is vervangen door een ledbalk van zes leds; zie [specs/003-niveau-ledbalk](../003-niveau-ledbalk/plan.md).
+
 **Herziening**: dit plan vervangt dat van 2026-11-09 (Arduino/PlatformIO met MQTT).
 - **Aanleiding**: het besluit van de beheerder op 2026-11-11 en constitutie 2.0.0. Het
   project gaat over op ESPHome, met alle logica in YAML, net als het zusterproject Buitenlamp.

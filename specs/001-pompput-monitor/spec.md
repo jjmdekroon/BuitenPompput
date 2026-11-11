@@ -28,6 +28,10 @@
 
 - De zoemer vervalt; ter plaatse signaleert alleen de statusled. Zie [specs/002-zoemer-verwijderen](../002-zoemer-verwijderen/spec.md).
 
+### Session 2026-11-11 (003-niveau-ledbalk)
+
+- De enkele led is vervangen door zes leds: led 1 toont de toestand, led 2–6 het niveau. Zie [specs/003-niveau-ledbalk](../003-niveau-ledbalk/spec.md).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Vulgraad van de put aflezen in Home Assistant (Priority: P1)
@@ -181,8 +185,8 @@ elke situatie moet de juiste waarschuwing via Home Assistant binnenkomen.
 
 **Signalering ter plaatse**
 
-- **FR-027**: Het apparaat MOET met een statuslampje (RGBW-led) via verschillende kleuren en knipperpatronen tonen: opstarten, normaal, pomp draait, geen verbinding met Home Assistant, storing, waarschuwing en alarm. Deze signalering MOET ook werken als de verbinding of Home Assistant niet beschikbaar is. (gewijzigd door 002)
-- **FR-028**: De gebruiker MOET de helderheid van de led vanuit Home Assistant kunnen instellen. (gewijzigd door 002)
+- **FR-027**: Het apparaat MOET met een statuslampje (led 1 van de ledbalk) via verschillende kleuren en knipperpatronen tonen: opstarten, normaal, pomp draait, geen verbinding met Home Assistant, storing, waarschuwing en alarm. Deze signalering MOET ook werken als de verbinding of Home Assistant niet beschikbaar is. (gewijzigd door 002) (gewijzigd door 003)
+- **FR-028**: De gebruiker MOET de helderheid van de led vanuit Home Assistant kunnen instellen. (gewijzigd door 002) (gewijzigd door 003)
 
 ### Key Entities *(include if feature involves data)*
 
@@ -203,7 +207,7 @@ elke situatie moet de juiste waarschuwing via Home Assistant binnenkomen.
 - **SC-006**: De gebruiker kan de actuele vulgraad en pompstatus binnen 10 seconden aflezen in Home Assistant.
 - **SC-007**: Als de bewaking wordt losgekoppeld of uitvalt, blijft de pomp in 100% van de testgevallen normaal aanslaan en afslaan op de eigen dompelschakelaar.
 - **SC-008**: Een in Home Assistant gewijzigde instelling is binnen 1 minuut van kracht. Na een herstart terwijl Home Assistant onbereikbaar is, meet en bewaakt het apparaat binnen 1 minuut weer met de laatst ingestelde waarden.
-- **SC-009**: Een nieuwe melding is binnen 5 seconden na activering zichtbaar op de statusled. Dit geldt ook zonder verbinding met Home Assistant. (gewijzigd door 002)
+- **SC-009**: Een nieuwe melding is binnen 5 seconden na activering zichtbaar op de statusled. Dit geldt ook zonder verbinding met Home Assistant. (gewijzigd door 002) (gewijzigd door 003)
 
 ## Assumptions
 
