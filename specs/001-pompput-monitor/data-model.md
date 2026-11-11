@@ -41,7 +41,6 @@ apparaat blijvend bewaart (FR-024).
 | `herstelmarge_pct` | procentpunt | 5 | 1–50 | 1 | global + regels | FR-021 |
 | `pomp_stroomdrempel_a` | A (RMS) | 0,5 | 0,05–20 | 0,05 | number | FR-006 |
 | `led_helderheid_pct` | % | 30 | 0–100 | 1 | number | FR-028 |
-| `zoemer_aan` | aan/uit | aan | — | — | switch | FR-028 |
 
 **De twee soorten opslag** (research R11):
 - **global + regels**: de geaccepteerde waarde staat in een `globals` met
@@ -87,7 +86,6 @@ regels. Is dat niet zo, dan is de melding **NIET_INGESTELD** actief.
 | Verwerking en meldingen | elke 1 s | R5 |
 | Publicatie waterhoogte en vulgraad | elke 10 s, en direct bij een statuswijziging | FR-003 |
 | Opstarten (witte led) | maximaal 10 s | lokale signalering |
-| Zoemertoon | 2700 Hz, 50 % | R10 |
 | Kleurvolgorde led | GRBW (controleren op de bank) | R9 |
 
 ---
@@ -232,12 +230,12 @@ Het apparaat bewaart geen gebeurtenissen. Is er geen verbinding, dan gaan ze ver
 
 ## 7. Signaleringstoestand (`IndicationState`)
 
+Vervallen met [002](../002-zoemer-verwijderen/data-model.md): de zoemer, "stil" en de
+led-bevestiging.
+
 | Veld | Betekenis | In ESPHome |
 |---|---|---|
-| `led_patroon` | volgt uit de apparaatstatus, de pompstatus, de verbinding en "opstarten" | script `led_patroon_kiezen` → script `led_knipperen`; huidige keuze in `g_led_patroon` |
-| `zoemer_patroon` | volgt uit de hoogste ernst (ALARM of WAARSCHUWING); storing, hersteld, bevestiging en opstarten zijn eenmalig | script `zoemer_patroon_kiezen` → `zoemer_herhalen`; eenmalige piepjes via `zoemer_eenmalig` |
-| `stil_voor` | de set actieve meldingen op het moment van "stil". Zolang de actuele set daar een deelverzameling van is, blijft de zoemer stil (FR-028) | `g_stil`, `g_stil_set` (bitmasker) |
-| `vorige_set` | de actieve meldingen bij de vorige beoordeling (voor "nieuwe melding" en "alles hersteld") | `g_vorige_set` |
+| `led_patroon` | volgt uit de apparaatstatus, de pompstatus, de verbinding en "opstarten"; wordt nooit onderbroken | script `led_patroon_kiezen` → script `led_knipperen`; huidige keuze in `g_led_patroon` |
 | `verbonden` | is de API verbonden (voor het led-patroon "geen verbinding") | `g_verbonden`, gezet door `api: on_client_connected` en `on_client_disconnected` |
 | `opstarten` | waar tot de eerste GELDIGE niveaumeting, maximaal 10 s | `g_opstarten` |
 

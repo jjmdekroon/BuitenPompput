@@ -52,10 +52,6 @@ views:
       - type: entities
         title: Bediening
         entities:
-          - entity: button.pompput_zoemer_stil
-            name: Zoemer stil
-          - entity: switch.pompput_zoemer
-            name: Zoemer aan
           - entity: input_boolean.pompput_toon_instellingen
             name: Instellingen tonen
 

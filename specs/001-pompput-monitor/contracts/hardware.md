@@ -3,8 +3,9 @@
 **Status**: ontwerp. Dit is de gezaghebbende bron voor pintoewijzing en elektrische aannames
 (constitutie, Embedded Platform Constraints). In de firmware staan de pinnen alleen in het
 `substitutions:`-blok van `esphome/pompput.yaml` (`pin_trig`, `pin_echo`, `pin_acs712`,
-`pin_led`, `pin_zoemer`, `pin_knop`), en dat blok volgt deze tabel. Een wijziging gebeurt hier
-en daar tegelijk. (De hardware is ongewijzigd sinds de overstap naar ESPHome op 2026-11-11.)
+`pin_led`), en dat blok volgt deze tabel. Een wijziging gebeurt hier en daar tegelijk.
+D5 is vrij sinds 002-zoemer-verwijderen: de piëzo-zoemer en de functie van de BOOT-knop zijn
+vervallen ([specs/002-zoemer-verwijderen](../../002-zoemer-verwijderen/spec.md)).
 
 ## Board
 
@@ -14,8 +15,8 @@ en daar tegelijk. (De hardware is ongewijzigd sinds de overstap naar ESPHome op 
 - ADC: alleen **ADC1** (GPIO0–4) gebruiken. Het bruikbare bereik is ongeveer 0–2,5 V bij een
   demping van 11/12 dB.
 - Strapping-pinnen: GPIO2, GPIO8 en GPIO9. Ze worden niet gebruikt voor signalen die bij het
-  opstarten van buitenaf worden aangestuurd. Uitzondering is GPIO9 (BOOT-knop, alleen aan de
-  gebruikerskant).
+  opstarten van buitenaf worden aangestuurd. GPIO9 is de BOOT-knop op het board; de firmware
+  gebruikt die pin niet.
 
 ## Pintoewijzing
 
@@ -25,8 +26,8 @@ en daar tegelijk. (De hardware is ongewijzigd sinds de overstap naar ESPHome op 
 | D2 | 4 | uit | HC-SR04 TRIG | rechtstreeks (3,3 V, bankverificatie) |
 | D3 | 5 | in | HC-SR04 ECHO | via deler 1 kΩ (serie) / 2 kΩ (naar GND) → ≈ 3,33 V (of 1,8 kΩ → ≈ 3,21 V) |
 | D4 | 6 | uit | SK6812 RGBW DIN | 330 Ω in serie |
-| D5 | 7 | uit (PWM) | Piëzo-zoemer | 100 Ω in serie, andere pool naar GND |
-| D9 | 9 | in (pull-up op het board) | BOOT-knop = "zoemer stil" | knop op het board; een externe knop mag parallel naar GND |
+| D5 | 7 | — | vrij (was piëzo-zoemer, vervallen met 002) | — |
+| D9 | 9 | — | BOOT-knop op het board, geen functie in de firmware | alleen voor de downloadmodus bij het opstarten |
 | 5V | — | voeding | HC-SR04 VCC, ACS712 VCC, led-VDD via diode | 5 V van USB-C |
 | GND | — | — | gemeenschappelijke massa | alle modules |
 | D0, D6, D7, D8, D10 | 2, 21, 20, 8, 10 | — | vrij | niet gebruikt |
@@ -73,15 +74,6 @@ D4 (GPIO6) ──[330 Ω]── DIN
 GND ─────────────────── GND        (100 nF tussen VDD en GND dicht bij de led)
 ```
 
-### Piëzo-zoemer (passief, PWM)
-
-```text
-D5 (GPIO7) ──[100 Ω]── piëzo + ;  piëzo − ── GND
-```
-
-Is het volume te laag, gebruik dan een NPN-transistor (bijvoorbeeld BC547): de basis via 1 kΩ
-aan D5, de piëzo met 1 kΩ parallel tussen 5 V en de collector, en de emitter aan GND.
-
 ## Voeding
 
 - 5 V USB-C-adapter van minimaal 1 A.
@@ -95,10 +87,11 @@ aan D5, de piëzo met 1 kΩ parallel tussen 5 V en de collector, en de emitter a
 Bij het opstarten zijn de uitgangen in een veilige toestand voordat de logica draait:
 - TRIG laag: de component `ultrasonic` zet de pin bij het opstarten als uitgang, en geeft
   alleen een puls van 10 µs bij een meting;
-- de zoemer uit: de `ledc`-output begint uit, en alleen een script zet de toon aan;
 - de led uit (`restore_mode: ALWAYS_OFF`, nooit uit flash hersteld), en daarna wit als
-  opstartindicatie via `on_boot`.
+  opstartindicatie via `on_boot`;
+- GPIO7 (D5) wordt niet geconfigureerd; een nog aangesloten passieve zoemer blijft stil
+  (002 research R2).
 
 De firmware heeft geen uitgang die de pomp kan beïnvloeden (FR-007, constitutie III).
-GPIO9 (BOOT-knop) is een strapping-pin. In de YAML is die alleen ingang, met
-`ignore_strapping_warning: true`.
+GPIO9 (BOOT-knop) is een strapping-pin. De firmware leest de pin niet meer (sinds 002); de
+knop werkt alleen nog bij het opstarten, voor de downloadmodus.

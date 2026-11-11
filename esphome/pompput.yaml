@@ -3,8 +3,8 @@
 #   draait.
 # - Het apparaat bepaalt zelf zeven meldingen: hoogwater, drie pompwaarschuwingen, twee
 #   sensorstoringen en "niet ingesteld".
-# - Ter plaatse signaleren een RGBW-led en een piëzo-zoemer; Home Assistant krijgt alles via de
-#   versleutelde native API.
+# - Ter plaatse signaleert een RGBW-statusled; Home Assistant krijgt alles via de versleutelde
+#   native API.
 # - Het apparaat bewaakt alleen. Het heeft geen uitgang naar de pomp (FR-007).
 #
 # Secties, in deze volgorde:
@@ -13,14 +13,14 @@
 #   3. niveau: ultrasonic, niveau_verwerken, waterhoogte, vulgraad, afstand (ruw)
 #   4. pomp: adc, ct_clamp, pomp_bijwerken, pomp, looptijd, pompstroom, offset
 #   5. meldingen: melding_stap, de beoordelingsscripts, de zeven meldingen, status
-#   6. instellingen: globals, numbers, switch, instelling_toepassen
-#   7. signalering: led, zoemer, patroonscripts, BOOT-knop, Zoemer stil
+#   6. instellingen: globals, numbers, instelling_toepassen
+#   7. signalering: led, patroonscripts
 #   8. gebeurtenissen en diagnose: event, Laatste gebeurtenis, diagnose
 # ESPHome staat een sleutel als `sensor:` maar één keer toe. Sectie 1 en 2 staan daarom
 # bovenaan, en de secties 3-8 zijn elk een pakket in dit bestand (packages:); ESPHome voegt hun
 # lijsten samen. Een id komt maar in één sectie voor.
 #
-# Spec, plan, contracten en validatie: specs/001-pompput-monitor/
+# Spec, plan, contracten en validatie: specs/001-pompput-monitor/ en specs/002-zoemer-verwijderen/
 # Pinnen: specs/001-pompput-monitor/contracts/hardware.md is gezaghebbend.
 # Elk script en elke entiteit noemt de requirements die het uitvoert (FR-0xx).
 
@@ -33,7 +33,7 @@ substitutions:
   # ---- Apparaat ----
   device_name: "pompput"           # hostnaam pompput.local
   friendly_name: "Pompput"         # naam in Home Assistant; de entity-id's volgen hieruit
-  project_version: "0.2.0"
+  project_version: "0.3.0"
   log_level: "INFO"                # INFO bij levering; DEBUG alleen voor validatie
   log_tag: "pompput"
   # ESPHome schrijft gewijzigde instellingen binnen 0,5 s naar flash, zodat een stroomonderbreking
@@ -45,8 +45,8 @@ substitutions:
   pin_trig: "GPIO4"                # D2; HC-SR04 TRIG, rechtstreeks
   pin_echo: "GPIO5"                # D3; HC-SR04 ECHO via deler 1k/2k
   pin_led: "GPIO6"                 # D4; SK6812 DIN via 330 ohm
-  pin_zoemer: "GPIO7"              # D5; piëzo via 100 ohm
-  pin_knop: "GPIO9"                # D9; BOOT-knop (strapping-pin, alleen ingang)
+  # D5 (GPIO7) is vrij en wordt niet geconfigureerd; D9 (GPIO9) is de BOOT-knop op het board,
+  # zonder functie in de firmware (002 research R2).
 
   # ---- Niveau (data-model §1-§3, research R6) ----
   ping_interval: "250ms"           # vier metingen per seconde
@@ -148,7 +148,6 @@ substitutions:
   # zo op de led. Met de standaard-gamma van 2,8 zou oranje vrijwel rood worden.
   led_gamma: "1.0"
   led_min_helderheid_alarm: "0.10" # een alarm is nooit onzichtbaar (FR-028)
-  knop_debounce: "50ms"
   # Kleuren als fractie (0-1) per kanaal R, G, B, W.
   led_rood_r: "1.0"
   led_rood_g: "0.0"
@@ -187,33 +186,6 @@ substitutions:
   led_pomp_uit_ms: "0"
   led_normaal_aan_ms: "100"
   led_normaal_uit_ms: "4900"
-  led_bevestiging_aantal: "2"
-  led_bevestiging_aan_ms: "100"
-  led_bevestiging_uit_ms: "100"
-  # Zoemer: passieve piëzo, blokgolf van 2,7 kHz met 50 % duty.
-  zoemer_frequentie: "2700Hz"
-  zoemer_niveau: "50%"
-  zoemer_alarm_aantal: "3"
-  zoemer_alarm_aan_ms: "150"
-  zoemer_alarm_uit_ms: "150"
-  zoemer_alarm_periode_ms: "10000"
-  zoemer_waarschuwing_aantal: "1"
-  zoemer_waarschuwing_aan_ms: "300"
-  zoemer_waarschuwing_uit_ms: "0"
-  zoemer_waarschuwing_periode_ms: "60000"
-  zoemer_storing_aantal: "2"
-  zoemer_storing_aan_ms: "100"
-  zoemer_storing_uit_ms: "100"
-  zoemer_hersteld_aantal: "1"
-  zoemer_hersteld_aan_ms: "50"
-  zoemer_hersteld_uit_ms: "0"
-  zoemer_bevestiging_aantal: "1"
-  zoemer_bevestiging_aan_ms: "50"
-  zoemer_bevestiging_uit_ms: "0"
-  zoemer_opstarten_aantal: "1"
-  zoemer_opstarten_aan_ms: "100"
-  zoemer_opstarten_uit_ms: "0"
-  zoemer_pauze_ms: "150"           # pauze na een eenmalig patroon
 
   # ---- Codes (benoemde toestanden; constitutie II en V) ----
   # Niveaustatus (data-model §3).
@@ -244,10 +216,6 @@ substitutions:
   bits_alarm: "0x01"               # bit 0
   bits_waarschuwing: "0x0E"        # bits 1-3
   bits_storing: "0x70"             # bits 4-6
-  # Zoemermodus.
-  zoemer_modus_stil: "0"
-  zoemer_modus_alarm: "1"
-  zoemer_modus_waarschuwing: "2"
   # Ledpatroon, in volgorde van prioriteit (contracts/lokale-signalering.md).
   led_patroon_geen: "0"            # dwingt een nieuwe keuze af
   led_patroon_alarm: "1"
@@ -281,8 +249,8 @@ esphome:
   project:
     name: diy.pompput
     version: ${project_version}
-  # FR-025, FR-027, FR-028; contracts/hardware.md "Veilige begintoestand"
-  # De led staat al uit (restore_mode ALWAYS_OFF), de zoemer-output begint uit en TRIG is laag:
+  # FR-025, FR-027; contracts/hardware.md "Veilige begintoestand"
+  # De led staat al uit (restore_mode ALWAYS_OFF) en TRIG is laag:
   # dat regelen de componenten zelf, vóór deze opstartvolgorde. Priority -100: alle componenten
   # zijn dan opgezet, dus ook de bewaarde instellingen en de led.
   on_boot:
@@ -308,14 +276,7 @@ esphome:
                                 id(stroomsensor_storing), id(niet_ingesteld)}) {
             melding->publish_state(false);
           }
-      # 4. De opstartpiep, ook als de zoemer uit staat (lokale signalering).
-      - script.execute:
-          id: zoemer_eenmalig
-          aantal: ${zoemer_opstarten_aantal}
-          aan_ms: ${zoemer_opstarten_aan_ms}
-          uit_ms: ${zoemer_opstarten_uit_ms}
-          altijd: true
-      # 5. Wit: opstarten, tot de eerste geldige niveaumeting en hoogstens opstarten_max.
+      # 4. Wit: opstarten, tot de eerste geldige niveaumeting en hoogstens opstarten_max.
       - script.execute: led_patroon_kiezen
       - delay: ${opstarten_max}
       - globals.set:
@@ -1214,7 +1175,8 @@ packages:
               if (id(status).state != nieuw) {
                 id(status).publish_state(nieuw);
               }
-          - script.execute: signalering_bijwerken
+          # De led volgt de nieuwe toestand direct (002 FR-003).
+          - script.execute: led_patroon_kiezen
 
     # FR-003, FR-018; data-model §5
     # Eerst het niveau verwerken, dan de meldingen beoordelen met de nieuwe niveaustatus.
@@ -1471,19 +1433,6 @@ packages:
         # en de led-strip is dan nog niet opgezet (crash bij de eerste test, 2026-11-11).
         # led_patroon_kiezen draait elke seconde en neemt een nieuwe helderheid binnen 1 s over.
 
-    # FR-028
-    # Uit = de zoemer klinkt nooit, behalve de opstartpiep. Bewaard, standaard aan.
-    switch:
-      - platform: template
-        id: zoemer
-        name: "Zoemer"
-        optimistic: true
-        restore_mode: RESTORE_DEFAULT_ON
-        on_turn_on:
-          - script.execute: zoemer_patroon_kiezen
-        on_turn_off:
-          - script.execute: zoemer_patroon_kiezen
-
     script:
       # FR-023, FR-024; randgeval "niet ingesteld"
       - id: ingesteld_bepalen
@@ -1571,7 +1520,8 @@ packages:
   # -------------------------------------------------------------------------------------------
   # ---- 7. Signalering ----
   # -------------------------------------------------------------------------------------------
-  # FR-027, FR-028, SC-009; contracts/lokale-signalering.md, research R9 en R10
+  # FR-027, FR-028 (led-helderheid); 002 FR-001–FR-007; contracts/lokale-signalering.md,
+  # 001 research R9
   signalering:
     globals:
       - id: g_led_patroon
@@ -1584,10 +1534,6 @@ packages:
         type: float
         restore_value: false
         initial_value: 'NAN'
-      - id: g_led_bevestiging_bezig
-        type: bool
-        restore_value: false
-        initial_value: 'false'
       # Waar tot de eerste geldige niveaumeting, en hoogstens opstarten_max.
       - id: g_opstarten
         type: bool
@@ -1597,34 +1543,6 @@ packages:
         type: bool
         restore_value: false
         initial_value: 'false'
-      - id: g_zoemer_modus
-        type: int
-        restore_value: false
-        initial_value: '${zoemer_modus_stil}'
-      # Dwingt zoemer_patroon_kiezen het patroon opnieuw te starten.
-      - id: g_zoemer_herstart
-        type: bool
-        restore_value: false
-        initial_value: 'false'
-      # Waar zolang zoemer_eenmalig speelt; dan start zoemer_patroon_kiezen niets.
-      - id: g_eenmalig_bezig
-        type: bool
-        restore_value: false
-        initial_value: 'false'
-      # "Stil" (FR-028): de zoemer zwijgt zolang de actieve meldingen een deelverzameling zijn
-      # van g_stil_set. Niet bewaard: na een herstart is "stil" opgeheven.
-      - id: g_stil
-        type: bool
-        restore_value: false
-        initial_value: 'false'
-      - id: g_stil_set
-        type: uint8_t
-        restore_value: false
-        initial_value: '0'
-      - id: g_vorige_set
-        type: uint8_t
-        restore_value: false
-        initial_value: '0'
 
     # De statusled. Intern: alleen de scripts sturen hem.
     light:
@@ -1643,13 +1561,6 @@ packages:
         gamma_correct: ${led_gamma}
         # Knipperpatronen springen; geen overgangen.
         default_transition_length: 0s
-
-    # De piëzo: PWM, met de toon als frequentie en het volume als duty.
-    output:
-      - platform: ledc
-        id: zoemer_output
-        pin: ${pin_zoemer}
-        frequency: ${zoemer_frequentie}
 
     script:
       # FR-027, FR-028
@@ -1705,265 +1616,62 @@ packages:
                                 transition_length: 0s
                             - delay: !lambda 'return uit_ms;'
 
-      # FR-027, FR-028; contracts/lokale-signalering.md "Statusled"
+      # FR-027; 002 FR-002, FR-003; contracts/lokale-signalering.md "Statusled"
       # Kiest het led-patroon: de bovenste regel die geldt, wint. Start led_knipperen alleen als
       # het patroon of de helderheid veranderd is.
       - id: led_patroon_kiezen
         then:
-          - if:
-              condition:
-                lambda: 'return !id(g_led_bevestiging_bezig);'
-              then:
-                - lambda: |-
-                    const uint8_t actief = id(g_actieve_set);
-                    int patroon;
-                    if (actief & ${bits_alarm}) patroon = ${led_patroon_alarm};
-                    else if (actief & ${bits_waarschuwing}) patroon = ${led_patroon_waarschuwing};
-                    else if (actief & ${bits_storing}) patroon = ${led_patroon_storing};
-                    else if (id(g_opstarten)) patroon = ${led_patroon_opstarten};
-                    else if (!id(g_verbonden)) patroon = ${led_patroon_geen_verbinding};
-                    else if (${pomp_draait_nu}) patroon = ${led_patroon_pomp};
-                    else patroon = ${led_patroon_normaal};
-                    float pct = id(led_helderheid_pct).state;
-                    if (std::isnan(pct)) pct = ${led_helderheid_pct_std};
-                    float helderheid = pct / ${pct_schaal};
-                    if (patroon == ${led_patroon_alarm}) {
-                      helderheid = fmaxf(helderheid, ${led_min_helderheid_alarm});
-                    }
-                    if (patroon == id(g_led_patroon) && helderheid == id(g_led_helderheid)) return;
-                    id(g_led_patroon) = patroon;
-                    id(g_led_helderheid) = helderheid;
-                    switch (patroon) {
-                      case ${led_patroon_alarm}:
-                        id(led_knipperen).execute(${led_rood_r}, ${led_rood_g}, ${led_rood_b},
-                            ${led_rood_w}, helderheid, ${led_alarm_aan_ms}, ${led_alarm_uit_ms});
-                        break;
-                      case ${led_patroon_waarschuwing}:
-                        id(led_knipperen).execute(${led_oranje_r}, ${led_oranje_g}, ${led_oranje_b},
-                            ${led_oranje_w}, helderheid, ${led_waarschuwing_aan_ms},
-                            ${led_waarschuwing_uit_ms});
-                        break;
-                      case ${led_patroon_storing}:
-                        id(led_knipperen).execute(${led_paars_r}, ${led_paars_g}, ${led_paars_b},
-                            ${led_paars_w}, helderheid, ${led_storing_aan_ms}, ${led_storing_uit_ms});
-                        break;
-                      case ${led_patroon_opstarten}:
-                        id(led_knipperen).execute(${led_wit_r}, ${led_wit_g}, ${led_wit_b},
-                            ${led_wit_w}, helderheid, 0, ${led_opstarten_uit_ms});
-                        break;
-                      case ${led_patroon_geen_verbinding}:
-                        id(led_knipperen).execute(${led_wit_r}, ${led_wit_g}, ${led_wit_b},
-                            ${led_wit_w}, helderheid, ${led_geen_verbinding_aan_ms},
-                            ${led_geen_verbinding_uit_ms});
-                        break;
-                      case ${led_patroon_pomp}:
-                        id(led_knipperen).execute(${led_blauw_r}, ${led_blauw_g}, ${led_blauw_b},
-                            ${led_blauw_w}, helderheid, 0, ${led_pomp_uit_ms});
-                        break;
-                      default:
-                        id(led_knipperen).execute(${led_groen_r}, ${led_groen_g}, ${led_groen_b},
-                            ${led_groen_w}, helderheid, ${led_normaal_aan_ms}, ${led_normaal_uit_ms});
-                        break;
-                    }
-
-      # FR-028
-      # Bevestiging van "zoemer stil": 2x wit. Daarna kiest led_patroon_kiezen opnieuw.
-      - id: led_bevestiging
-        mode: restart
-        then:
-          - globals.set:
-              id: g_led_bevestiging_bezig
-              value: 'true'
-          - script.stop: led_knipperen
-          - repeat:
-              count: ${led_bevestiging_aantal}
-              then:
-                - light.turn_on:
-                    id: statusled
-                    brightness: !lambda |-
-                      float pct = id(led_helderheid_pct).state;
-                      if (std::isnan(pct)) pct = ${led_helderheid_pct_std};
-                      return fmaxf(pct / ${pct_schaal}, ${led_min_helderheid_alarm});
-                    red: ${led_wit_r}
-                    green: ${led_wit_g}
-                    blue: ${led_wit_b}
-                    white: ${led_wit_w}
-                    transition_length: 0s
-                - delay: ${led_bevestiging_aan_ms}ms
-                - light.turn_off:
-                    id: statusled
-                    transition_length: 0s
-                - delay: ${led_bevestiging_uit_ms}ms
-          - globals.set:
-              id: g_led_bevestiging_bezig
-              value: 'false'
-          - globals.set:
-              id: g_led_patroon
-              value: '${led_patroon_geen}'
-          - script.execute: led_patroon_kiezen
-
-      # FR-027
-      # Een herhaald zoemerpatroon: `aantal` tonen, dan stil tot de periode om is. Een nieuw
-      # patroon herstart het script; wie het stopt, zet daarna de output uit.
-      - id: zoemer_herhalen
-        mode: restart
-        parameters:
-          aantal: int
-          aan_ms: int
-          uit_ms: int
-          periode_ms: int
-        then:
-          - while:
-              condition:
-                lambda: 'return true;'
-              then:
-                - repeat:
-                    count: !lambda 'return aantal;'
-                    then:
-                      - output.set_level:
-                          id: zoemer_output
-                          level: ${zoemer_niveau}
-                      - delay: !lambda 'return aan_ms;'
-                      - output.turn_off: zoemer_output
-                      - delay: !lambda 'return uit_ms;'
-                - delay: !lambda 'return periode_ms - aantal * (aan_ms + uit_ms);'
-
-      # FR-027, FR-028
-      # Een eenmalig patroon (opstarten, storing, hersteld, bevestiging). Onderbreekt een herhaald
-      # patroon en laat zoemer_patroon_kiezen dat daarna opnieuw starten. Wachtrij: twee
-      # eenmalige patronen klinken na elkaar.
-      - id: zoemer_eenmalig
-        mode: queued
-        parameters:
-          aantal: int
-          aan_ms: int
-          uit_ms: int
-          altijd: bool
-        then:
-          - globals.set:
-              id: g_eenmalig_bezig
-              value: 'true'
-          - script.stop: zoemer_herhalen
-          - output.turn_off: zoemer_output
-          - if:
-              condition:
-                lambda: 'return altijd || id(zoemer).state;'
-              then:
-                - repeat:
-                    count: !lambda 'return aantal;'
-                    then:
-                      - output.set_level:
-                          id: zoemer_output
-                          level: ${zoemer_niveau}
-                      - delay: !lambda 'return aan_ms;'
-                      - output.turn_off: zoemer_output
-                      - delay: !lambda 'return uit_ms;'
-          - delay: ${zoemer_pauze_ms}ms
-          - globals.set:
-              id: g_eenmalig_bezig
-              value: 'false'
-          - globals.set:
-              id: g_zoemer_herstart
-              value: 'true'
-          - script.execute: zoemer_patroon_kiezen
-
-      # FR-027, FR-028; contracts/lokale-signalering.md "Zoemer"
-      # Kiest het herhaalde patroon: alarm, waarschuwing of stil.
-      - id: zoemer_patroon_kiezen
-        then:
-          - lambda: |-
-              if (id(g_eenmalig_bezig)) return;
-              const uint8_t actief = id(g_actieve_set);
-              int modus = ${zoemer_modus_stil};
-              if (id(zoemer).state && !id(g_stil)) {
-                if (actief & ${bits_alarm}) modus = ${zoemer_modus_alarm};
-                else if (actief & ${bits_waarschuwing}) modus = ${zoemer_modus_waarschuwing};
-              }
-              if (modus == id(g_zoemer_modus) && !id(g_zoemer_herstart)) return;
-              id(g_zoemer_modus) = modus;
-              id(g_zoemer_herstart) = false;
-              if (modus == ${zoemer_modus_alarm}) {
-                id(zoemer_herhalen).execute(${zoemer_alarm_aantal}, ${zoemer_alarm_aan_ms},
-                                            ${zoemer_alarm_uit_ms}, ${zoemer_alarm_periode_ms});
-              } else if (modus == ${zoemer_modus_waarschuwing}) {
-                id(zoemer_herhalen).execute(${zoemer_waarschuwing_aantal},
-                                            ${zoemer_waarschuwing_aan_ms},
-                                            ${zoemer_waarschuwing_uit_ms},
-                                            ${zoemer_waarschuwing_periode_ms});
-              } else {
-                id(zoemer_herhalen).stop();
-                id(zoemer_output).turn_off();
-              }
-
-      # FR-027, FR-028, SC-009
-      # Na elke beoordeling: "stil" opheffen bij een nieuwe melding, de eenmalige piepjes, en
-      # led en zoemer bijwerken.
-      - id: signalering_bijwerken
-        then:
           - lambda: |-
               const uint8_t actief = id(g_actieve_set);
-              const uint8_t nieuw = actief & (uint8_t) ~id(g_vorige_set);
-              if (id(g_stil) && (actief & (uint8_t) ~id(g_stil_set)) != 0) {
-                id(g_stil) = false;  // een nieuwe melding: de zoemer klinkt weer (FR-028)
-                id(g_zoemer_herstart) = true;
+              int patroon;
+              if (actief & ${bits_alarm}) patroon = ${led_patroon_alarm};
+              else if (actief & ${bits_waarschuwing}) patroon = ${led_patroon_waarschuwing};
+              else if (actief & ${bits_storing}) patroon = ${led_patroon_storing};
+              else if (id(g_opstarten)) patroon = ${led_patroon_opstarten};
+              else if (!id(g_verbonden)) patroon = ${led_patroon_geen_verbinding};
+              else if (${pomp_draait_nu}) patroon = ${led_patroon_pomp};
+              else patroon = ${led_patroon_normaal};
+              float pct = id(led_helderheid_pct).state;
+              if (std::isnan(pct)) pct = ${led_helderheid_pct_std};
+              float helderheid = pct / ${pct_schaal};
+              if (patroon == ${led_patroon_alarm}) {
+                helderheid = fmaxf(helderheid, ${led_min_helderheid_alarm});
               }
-              if (!id(g_stil) && (nieuw & ${bits_storing})) {
-                id(zoemer_eenmalig).execute(${zoemer_storing_aantal}, ${zoemer_storing_aan_ms},
-                                            ${zoemer_storing_uit_ms}, false);
+              if (patroon == id(g_led_patroon) && helderheid == id(g_led_helderheid)) return;
+              id(g_led_patroon) = patroon;
+              id(g_led_helderheid) = helderheid;
+              switch (patroon) {
+                case ${led_patroon_alarm}:
+                  id(led_knipperen).execute(${led_rood_r}, ${led_rood_g}, ${led_rood_b},
+                      ${led_rood_w}, helderheid, ${led_alarm_aan_ms}, ${led_alarm_uit_ms});
+                  break;
+                case ${led_patroon_waarschuwing}:
+                  id(led_knipperen).execute(${led_oranje_r}, ${led_oranje_g}, ${led_oranje_b},
+                      ${led_oranje_w}, helderheid, ${led_waarschuwing_aan_ms},
+                      ${led_waarschuwing_uit_ms});
+                  break;
+                case ${led_patroon_storing}:
+                  id(led_knipperen).execute(${led_paars_r}, ${led_paars_g}, ${led_paars_b},
+                      ${led_paars_w}, helderheid, ${led_storing_aan_ms}, ${led_storing_uit_ms});
+                  break;
+                case ${led_patroon_opstarten}:
+                  id(led_knipperen).execute(${led_wit_r}, ${led_wit_g}, ${led_wit_b},
+                      ${led_wit_w}, helderheid, 0, ${led_opstarten_uit_ms});
+                  break;
+                case ${led_patroon_geen_verbinding}:
+                  id(led_knipperen).execute(${led_wit_r}, ${led_wit_g}, ${led_wit_b},
+                      ${led_wit_w}, helderheid, ${led_geen_verbinding_aan_ms},
+                      ${led_geen_verbinding_uit_ms});
+                  break;
+                case ${led_patroon_pomp}:
+                  id(led_knipperen).execute(${led_blauw_r}, ${led_blauw_g}, ${led_blauw_b},
+                      ${led_blauw_w}, helderheid, 0, ${led_pomp_uit_ms});
+                  break;
+                default:
+                  id(led_knipperen).execute(${led_groen_r}, ${led_groen_g}, ${led_groen_b},
+                      ${led_groen_w}, helderheid, ${led_normaal_aan_ms}, ${led_normaal_uit_ms});
+                  break;
               }
-              if (!id(g_stil) && (nieuw & (${bits_alarm} | ${bits_waarschuwing}))) {
-                id(g_zoemer_herstart) = true;  // het eerste patroon direct (SC-009)
-              }
-              if (id(g_vorige_set) != 0 && actief == 0) {
-                id(zoemer_eenmalig).execute(${zoemer_hersteld_aantal}, ${zoemer_hersteld_aan_ms},
-                                            ${zoemer_hersteld_uit_ms}, false);
-              }
-              id(g_vorige_set) = actief;
-          - script.execute: led_patroon_kiezen
-          - script.execute: zoemer_patroon_kiezen
-
-      # FR-028
-      # "Zoemer stil", vanaf de BOOT-knop of vanuit HA.
-      - id: zoemer_stilzetten
-        then:
-          - globals.set:
-              id: g_stil
-              value: 'true'
-          - lambda: 'id(g_stil_set) = id(g_actieve_set);'
-          - script.execute:
-              id: zoemer_eenmalig
-              aantal: ${zoemer_bevestiging_aantal}
-              aan_ms: ${zoemer_bevestiging_aan_ms}
-              uit_ms: ${zoemer_bevestiging_uit_ms}
-              altijd: false
-          - script.execute: led_bevestiging
-
-    # FR-028
-    # De BOOT-knop op het board (D9). GPIO9 is een strapping-pin; hier alleen ingang.
-    binary_sensor:
-      - platform: gpio
-        id: boot_knop
-        name: "BOOT-knop"
-        internal: true
-        pin:
-          number: ${pin_knop}
-          inverted: true
-          mode:
-            input: true
-            pullup: true
-          ignore_strapping_warning: true
-        filters:
-          - delayed_on: ${knop_debounce}
-        on_press:
-          - script.execute: zoemer_stilzetten
-
-    # FR-028
-    button:
-      - platform: template
-        id: zoemer_stil
-        name: "Zoemer stil"
-        on_press:
-          - script.execute: zoemer_stilzetten
 
   # -------------------------------------------------------------------------------------------
   # ---- 8. Gebeurtenissen en diagnose ----

@@ -16,13 +16,17 @@
 - Q: Hoeveel historie van pompcycli en waterniveau is gewenst, en waar wordt die bewaard? → A: Home Assistant slaat het waterniveau en alle pompstarts op. Op het apparaat zelf worden geen meetgegevens bewaard.
 - Q: Wat moet het apparaat met de gegevens doen als de verbinding met Home Assistant wegvalt? → A: Niets bewaren; de gegevens van die periode gaan verloren. (Een tijdelijke opslag van maximaal 1 dag op het apparaat is overwogen en bewust geschrapt.)
 - Q: Waar worden de instellingen aangepast, en mag het apparaat er een kopie van bewaren? → A: In Home Assistant. Het apparaat bewaart de laatst ontvangen instellingen, zodat die een herstart overleven.
-- Q: Moet het apparaat bij de put zelf ook de status en meldingen laten zien of horen? → A: Ja. Een RGBW-led toont de status en meldingen, en een piëzo-zoemer met PWM-geluid geeft alarmen en waarschuwingen. Dit komt naast Home Assistant, niet in plaats daarvan.
+- Q: Moet het apparaat bij de put zelf ook de status en meldingen laten zien of horen? → A: Ja. Een RGBW-led toont de status en meldingen, en een piëzo-zoemer met PWM-geluid geeft alarmen en waarschuwingen. Dit komt naast Home Assistant, niet in plaats daarvan. (zoemer vervallen met 002)
 
 ### Session 2026-11-11 (naar aanleiding van `/speckit-analyze`)
 
 - Q: Wat doet de niveaumeting als die na een storing terugkomt terwijl het niveau intussen sterk veranderd is? → A: Het apparaat leert het niveau vanzelf opnieuw in. Een hindernis die blijft hangen, kan daardoor een onterecht hoogwater-alarm geven; liever een onterecht alarm dan een gemist alarm.
-- Q: Geldt de beperking "hoogstens eens per herinneringsinterval" ook voor de zoemer bij de put? → A: Nee. Die geldt alleen voor meldingen op afstand via Home Assistant (FR-020); de signalering ter plaatse volgt FR-027 en FR-028.
+- Q: Geldt de beperking "hoogstens eens per herinneringsinterval" ook voor de zoemer bij de put? → A: Nee. Die geldt alleen voor meldingen op afstand via Home Assistant (FR-020); de signalering ter plaatse volgt FR-027 en FR-028. (zoemer vervallen met 002)
 - Q: Welke waarden moeten vanuit Home Assistant instelbaar zijn? → A: De put-maten en de drempels, marges en wachttijden van de meldingen op het apparaat. Het herinneringsinterval en de wachttijd voor "bewaking niet bereikbaar" staan in de Home Assistant-configuratie; interne filtertijden liggen vast in de firmware (FR-023).
+
+### Session 2026-11-11 (002-zoemer-verwijderen)
+
+- De zoemer vervalt; ter plaatse signaleert alleen de statusled. Zie [specs/002-zoemer-verwijderen](../002-zoemer-verwijderen/spec.md).
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -64,7 +68,7 @@ en dat een herstelmelding volgt wanneer het niveau weer voldoende is gedaald.
 
 **Acceptance Scenarios**:
 
-1. **Gegeven** de alarmdrempel staat op 80%, **wanneer** het niveau langer dan 30 seconden boven 80% blijft, **dan** ontvang ik via Home Assistant een hoogwater-alarm met het actuele niveau, en geven de statusled en de zoemer bij de put alarm.
+1. **Gegeven** de alarmdrempel staat op 80%, **wanneer** het niveau langer dan 30 seconden boven 80% blijft, **dan** ontvang ik via Home Assistant een hoogwater-alarm met het actuele niveau, en geeft de statusled bij de put alarm. (gewijzigd door 002)
 2. **Gegeven** het niveau komt door een golf heel kort boven de drempel, **wanneer** het binnen 30 seconden weer onder de drempel zakt, **dan** ontvang ik geen alarm.
 3. **Gegeven** er is een actief hoogwater-alarm, **wanneer** het niveau zakt tot 5 procentpunt onder de drempel, **dan** ontvang ik een herstelmelding en is het alarm niet meer actief.
 4. **Gegeven** er is een actief hoogwater-alarm, **wanneer** het een uur later nog steeds actief is, **dan** ontvang ik een herinnering.
@@ -129,7 +133,7 @@ elke situatie moet de juiste waarschuwing via Home Assistant binnenkomen.
 - **Herstart terwijl Home Assistant niet bereikbaar is**: het apparaat meet en bewaakt verder met de laatst bewaarde instellingen.
 - **Eerste start zonder instellingen**: het apparaat meldt dat het nog niet is ingesteld. Het toont geen vulgraad en geeft geen pompwaarschuwingen op basis van onbekende waarden.
 - **Ongeldige instellingen** (bijvoorbeeld een vol-niveau dat lager ligt dan het leeg-niveau): het apparaat weigert de nieuwe waarden, blijft de laatst geldige instellingen gebruiken en meldt dat de wijziging is afgewezen.
-- **Home Assistant zelf is niet beschikbaar**: er worden dan geen gegevens opgeslagen en er komen geen meldingen op afstand binnen. De statusled en de zoemer bij de put signaleren wel gewoon. Dit is een geaccepteerde beperking (zie Assumptions).
+- **Home Assistant zelf is niet beschikbaar**: er worden dan geen gegevens opgeslagen en er komen geen meldingen op afstand binnen. De statusled bij de put signaleert wel gewoon. Dit is een geaccepteerde beperking (zie Assumptions). (gewijzigd door 002)
 - **Niveau schommelt rond een drempel**: door de herstelmarge (hysterese) wisselt een melding niet steeds tussen actief en hersteld.
 - **Vorst**: ijs op het wateroppervlak wordt als waterniveau gemeten. Dit is een bekende beperking (zie Assumptions).
 
@@ -164,7 +168,7 @@ elke situatie moet de juiste waarschuwing via Home Assistant binnenkomen.
 - **FR-017**: Het systeem MOET de melding **"bewaking niet bereikbaar"** geven wanneer Home Assistant langer dan 5 minuten geen gegevens van het apparaat heeft ontvangen.
 - **FR-018**: Alle meldingen MOETEN via Home Assistant worden afgeleverd en daar als actieve melding zichtbaar zijn. Daarnaast signaleert het apparaat ter plaatse (FR-027). Het apparaat heeft geen display.
 - **FR-019**: Elke melding MOET in begrijpelijke taal vermelden: het soort melding (alarm, waarschuwing of storing), de vermoedelijke oorzaak, het actuele niveau, de pompstatus en sinds wanneer de situatie speelt.
-- **FR-020**: Zolang een melding actief is, MOET Home Assistant die zichtbaar houden en de gebruiker op afstand hoogstens eens per herinneringsinterval (standaard 1 uur) opnieuw waarschuwen. Daartussen wordt de melding op afstand niet herhaald. De signalering ter plaatse (led en zoemer) valt hier niet onder; die volgt FR-027 en FR-028.
+- **FR-020**: Zolang een melding actief is, MOET Home Assistant die zichtbaar houden en de gebruiker op afstand hoogstens eens per herinneringsinterval (standaard 1 uur) opnieuw waarschuwen. Daartussen wordt de melding op afstand niet herhaald. De signalering ter plaatse (led) valt hier niet onder; die volgt FR-027. (gewijzigd door 002)
 - **FR-021**: Het systeem MOET een herstelmelding geven zodra de oorzaak van een melding is verdwenen. Bij niveaumeldingen geldt daarvoor een herstelmarge (standaard 5 procentpunt onder de drempel), zodat een melding niet steeds wisselt tussen actief en hersteld.
 - **FR-022**: Valt de niveaumeting uit terwijl het hoogwater-alarm actief is, dan MOET het alarm actief blijven totdat een geldige meting aantoont dat het niveau weer gezakt is.
 
@@ -177,8 +181,8 @@ elke situatie moet de juiste waarschuwing via Home Assistant binnenkomen.
 
 **Signalering ter plaatse**
 
-- **FR-027**: Het apparaat MOET met een statuslampje (RGBW-led) via verschillende kleuren en knipperpatronen tonen: opstarten, normaal, pomp draait, geen verbinding met Home Assistant, storing, waarschuwing en alarm. Bij een alarm of waarschuwing MOET het apparaat ook hoorbaar signaleren met een piëzo-zoemer die via PWM wordt aangestuurd. Deze signalering MOET ook werken als de verbinding of Home Assistant niet beschikbaar is.
-- **FR-028**: De gebruiker MOET de zoemer kunnen stilzetten, zowel vanuit Home Assistant als met een knop op het apparaat. De zoemer blijft dan stil totdat er een nieuwe melding bijkomt. Daarnaast MOET de gebruiker de zoemer vanuit Home Assistant helemaal kunnen uitschakelen, en de helderheid van de led kunnen instellen.
+- **FR-027**: Het apparaat MOET met een statuslampje (RGBW-led) via verschillende kleuren en knipperpatronen tonen: opstarten, normaal, pomp draait, geen verbinding met Home Assistant, storing, waarschuwing en alarm. Deze signalering MOET ook werken als de verbinding of Home Assistant niet beschikbaar is. (gewijzigd door 002)
+- **FR-028**: De gebruiker MOET de helderheid van de led vanuit Home Assistant kunnen instellen. (gewijzigd door 002)
 
 ### Key Entities *(include if feature involves data)*
 
@@ -199,14 +203,14 @@ elke situatie moet de juiste waarschuwing via Home Assistant binnenkomen.
 - **SC-006**: De gebruiker kan de actuele vulgraad en pompstatus binnen 10 seconden aflezen in Home Assistant.
 - **SC-007**: Als de bewaking wordt losgekoppeld of uitvalt, blijft de pomp in 100% van de testgevallen normaal aanslaan en afslaan op de eigen dompelschakelaar.
 - **SC-008**: Een in Home Assistant gewijzigde instelling is binnen 1 minuut van kracht. Na een herstart terwijl Home Assistant onbereikbaar is, meet en bewaakt het apparaat binnen 1 minuut weer met de laatst ingestelde waarden.
-- **SC-009**: Een nieuwe melding is binnen 5 seconden na activering zichtbaar op de statusled en, bij een alarm of waarschuwing, hoorbaar via de zoemer. Dit geldt ook zonder verbinding met Home Assistant.
+- **SC-009**: Een nieuwe melding is binnen 5 seconden na activering zichtbaar op de statusled. Dit geldt ook zonder verbinding met Home Assistant. (gewijzigd door 002)
 
 ## Assumptions
 
 - Het gaat om één put met één pomp, bewaakt voor één huishouden.
 - De gebruiker heeft een werkend Home Assistant-systeem op het thuisnetwerk, met meldingen naar de telefoon of een ander kanaal al ingericht. Home Assistant installeren en onderhouden valt buiten scope. Het beschikbaar maken van de gegevens in Home Assistant en de benodigde dashboard- en meldingsconfiguratie horen wel bij deze feature.
 - Bij de put is een stabiele netwerkverbinding naar Home Assistant beschikbaar.
-- Home Assistant is het enige kanaal voor historie en voor meldingen op afstand. Als Home Assistant niet beschikbaar is, signaleren alleen de led en de zoemer bij de put. Een tweede meldkanaal op afstand valt buiten scope.
+- Home Assistant is het enige kanaal voor historie en voor meldingen op afstand. Als Home Assistant niet beschikbaar is, signaleert alleen de led bij de put. (gewijzigd door 002) Een tweede meldkanaal op afstand valt buiten scope.
 - Omdat het apparaat geen meetgegevens bewaart, gaan gegevens uit een periode zonder verbinding verloren. Dat is acceptabel.
 - De pomp heeft een eigen dompel-/vlotterschakelaar die leidend blijft. Het systeem is uitsluitend bewakend en stuurt de pomp niet aan; automatisch schakelen van de pomp of een reservepomp valt buiten scope.
 - De stroommeting wordt zo aangebracht dat die de pomp niet beïnvloedt en elektrisch veilig is voor de netspanning van de pomp.
