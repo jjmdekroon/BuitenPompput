@@ -32,6 +32,10 @@
 
 - De enkele led is vervangen door zes leds: led 1 toont de toestand, led 2–6 het niveau. Zie [specs/003-niveau-ledbalk](../003-niveau-ledbalk/spec.md).
 
+### Session 2026-11-18 (004-stroomsensor-verwijderen)
+
+- De stroomsensor en alle pompbewaking vervallen; het apparaat bewaakt alleen het niveau. Zie [specs/004-stroomsensor-verwijderen](../004-stroomsensor-verwijderen/spec.md).
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Vulgraad van de put aflezen in Home Assistant (Priority: P1)
@@ -79,7 +83,7 @@ en dat een herstelmelding volgt wanneer het niveau weer voldoende is gedaald.
 
 ---
 
-### User Story 3 - Pompactiviteit volgen (Priority: P3)
+### User Story 3 - Pompactiviteit volgen (Priority: P3) (vervallen met 004)
 
 Als eigenaar wil ik in Home Assistant kunnen zien wanneer de pomp aanspringt en hoe lang die draait,
 zodat ik kan controleren of de eigen dompelschakelaar van de pomp goed werkt.
@@ -100,7 +104,7 @@ met de juiste looptijd registreert en toont.
 
 ---
 
-### User Story 4 - Waarschuwing als de pomp niet goed afpompt (Priority: P4)
+### User Story 4 - Waarschuwing als de pomp niet goed afpompt (Priority: P4) (vervallen met 004)
 
 Als eigenaar wil ik gewaarschuwd worden als de pomp niet aanslaat terwijl dat wel zou moeten, of
 als de pomp draait maar het water niet zakt, zodat ik een defect (vastzittende vlotter,
@@ -128,14 +132,14 @@ elke situatie moet de juiste waarschuwing via Home Assistant binnenkomen.
 - **Golven en opspattend water** bij instromen of tijdens het pompen geven afwijkende metingen. Een enkele afwijkende meting mag geen melding of sprong in het getoonde niveau veroorzaken.
 - **Vervuilde of beslagen afstandsmeter** (condens, spinnenweb, blad) kan een onrealistisch korte afstand meten, wat op een volle put lijkt. Een niveausprong die sneller is dan fysiek mogelijk wordt als onbetrouwbare meting behandeld en leidt tot een storingsmelding, niet tot een hoogwater-alarm. Bij het inleren (na een herstart, na een reset van de niveaumeting of na een langdurige storing) is er geen eerdere waarde om mee te vergelijken. Een hindernis die stil blijft hangen, wordt dan als waterniveau gezien en kan een hoogwater-alarm geven. Dit is een bekende beperking: liever een onterecht alarm dan een gemist alarm.
 - **Water tot aan de afstandsmeter** (put overstroomt) maakt meten onmogelijk. Als de meting uitvalt terwijl het laatst bekende niveau boven de alarmdrempel lag, blijft het hoogwater-alarm actief en komt er een storingsmelding bij; het alarm wordt niet stilzwijgend opgeheven. Komt de meting terug terwijl het niveau intussen sterk veranderd is, dan leert het apparaat het niveau vanzelf opnieuw in. Pas een geldige meting onder de herstelgrens heft het alarm op.
-- **Pomp krijgt geen stroom** (zekering of aardlekschakelaar eruit, stekker los): er wordt geen stroom gemeten terwijl het niveau stijgt, wat tot de waarschuwing "pomp start niet" leidt.
-- **Pomp loopt droog** (vlotter blijft hangen in de aan-stand terwijl de put leeg is): dit wordt gevangen door de waarschuwing "pomp draait te lang".
-- **Hevige regen**, waarbij de toestroom groter is dan wat de pomp kan afvoeren: het niveau stijgt ondanks een draaiende pomp. Dit leidt eerst tot "pomp pompt niet af" en zo nodig tot het hoogwater-alarm.
-- **Pomp slaat vaak kort aan en af** (pendelen, bijvoorbeeld door een lekkende terugslagklep): dit is zichtbaar via de pompstarts in de historie van Home Assistant.
-- **Apparaat niet bereikbaar** (geen verbinding, apparaat zonder stroom of vastgelopen): Home Assistant toont het niveau en de pompstatus dan als onbeschikbaar en geeft de melding "bewaking niet bereikbaar". Het apparaat bewaart geen meetgegevens, dus metingen, pompstarts en meldingen uit die periode gaan verloren. Na herstel wordt direct de actuele toestand doorgegeven; een melding die dan nog actief is, wordt alsnog afgeleverd.
+- **Pomp krijgt geen stroom** (zekering of aardlekschakelaar eruit, stekker los): er wordt geen stroom gemeten terwijl het niveau stijgt, wat tot de waarschuwing "pomp start niet" leidt. (vervallen met 004)
+- **Pomp loopt droog** (vlotter blijft hangen in de aan-stand terwijl de put leeg is): dit wordt gevangen door de waarschuwing "pomp draait te lang". (vervallen met 004)
+- **Hevige regen**, waarbij de toestroom groter is dan wat de pomp kan afvoeren: het niveau stijgt ondanks een draaiende pomp. Dit leidt tot het hoogwater-alarm als het niveau te hoog komt. (gewijzigd door 004)
+- **Pomp slaat vaak kort aan en af** (pendelen, bijvoorbeeld door een lekkende terugslagklep): dit is zichtbaar via de pompstarts in de historie van Home Assistant. (vervallen met 004)
+- **Apparaat niet bereikbaar** (geen verbinding, apparaat zonder stroom of vastgelopen): Home Assistant toont het niveau dan als onbeschikbaar en geeft de melding "bewaking niet bereikbaar". Het apparaat bewaart geen meetgegevens, dus metingen en meldingen uit die periode gaan verloren. Na herstel wordt direct de actuele toestand doorgegeven; een melding die dan nog actief is, wordt alsnog afgeleverd. (gewijzigd door 004)
 - **Stroomuitval of herstart van het apparaat**: na herstel gaat het apparaat zelfstandig weer meten en gegevens doorgeven. Een melding die vóór de herstart actief was, wordt opnieuw beoordeeld en zo nodig opnieuw gemeld.
 - **Herstart terwijl Home Assistant niet bereikbaar is**: het apparaat meet en bewaakt verder met de laatst bewaarde instellingen.
-- **Eerste start zonder instellingen**: het apparaat meldt dat het nog niet is ingesteld. Het toont geen vulgraad en geeft geen pompwaarschuwingen op basis van onbekende waarden.
+- **Eerste start zonder instellingen**: het apparaat meldt dat het nog niet is ingesteld. Het toont geen vulgraad op basis van onbekende waarden. (gewijzigd door 004)
 - **Ongeldige instellingen** (bijvoorbeeld een vol-niveau dat lager ligt dan het leeg-niveau): het apparaat weigert de nieuwe waarden, blijft de laatst geldige instellingen gebruiken en meldt dat de wijziging is afgewezen.
 - **Home Assistant zelf is niet beschikbaar**: er worden dan geen gegevens opgeslagen en er komen geen meldingen op afstand binnen. De statusled bij de put signaleert wel gewoon. Dit is een geaccepteerde beperking (zie Assumptions). (gewijzigd door 002)
 - **Niveau schommelt rond een drempel**: door de herstelmarge (hysterese) wisselt een melding niet steeds tussen actief en hersteld.
@@ -155,56 +159,56 @@ elke situatie moet de juiste waarschuwing via Home Assistant binnenkomen.
 
 **Pompactiviteit**
 
-- **FR-006**: Het systeem MOET aan de hand van het stroomverbruik van de pomp vaststellen of de pomp draait of stilstaat.
+- **FR-006**: Het systeem MOET aan de hand van het stroomverbruik van de pomp vaststellen of de pomp draait of stilstaat. (vervallen met 004)
 - **FR-007**: Het systeem MOET de pomp en de dompelschakelaar ongemoeid laten. Het systeem bewaakt alleen, schakelt de pomp nooit, en de pomp MOET normaal blijven werken als de bewaking uitvalt of gestoord is.
-- **FR-008**: Het systeem MOET de actuele pompstatus (draait / staat stil) in Home Assistant beschikbaar maken.
-- **FR-009**: Het systeem MOET elke pompstart en -stop binnen 5 seconden aan Home Assistant doorgeven, zodat daar per cyclus het startmoment en de looptijd te zien zijn, en ook het aantal starts per periode (minimaal de afgelopen 24 uur).
-- **FR-010**: Home Assistant slaat het verloop van het waterniveau, de pompstarts en -stops en de meldingen op en toont ze. Het apparaat bij de put MAG geen historie van metingen, pompcycli of meldingen bewaren, ook niet tijdelijk wanneer de verbinding met Home Assistant wegvalt.
-- **FR-011**: Het systeem MAG een stroompiek die korter dan 2 seconden duurt NIET als pompstart tellen.
+- **FR-008**: Het systeem MOET de actuele pompstatus (draait / staat stil) in Home Assistant beschikbaar maken. (vervallen met 004)
+- **FR-009**: Het systeem MOET elke pompstart en -stop binnen 5 seconden aan Home Assistant doorgeven, zodat daar per cyclus het startmoment en de looptijd te zien zijn, en ook het aantal starts per periode (minimaal de afgelopen 24 uur). (vervallen met 004)
+- **FR-010**: Home Assistant slaat het verloop van het waterniveau en de meldingen op en toont ze. Het apparaat bij de put MAG geen historie van metingen of meldingen bewaren, ook niet tijdelijk wanneer de verbinding met Home Assistant wegvalt. (gewijzigd door 004)
+- **FR-011**: Het systeem MAG een stroompiek die korter dan 2 seconden duurt NIET als pompstart tellen. (vervallen met 004)
 
 **Meldingen**
 
 - **FR-012**: Het systeem MOET een **hoogwater-alarm** geven wanneer het niveau langer dan de wachttijd (standaard 30 seconden) boven de alarmdrempel (standaard 80%) staat.
-- **FR-013**: Het systeem MOET de waarschuwing **"pomp start niet"** geven wanneer het niveau meer dan een marge (standaard 5 cm) boven het verwachte inschakelniveau van de dompelschakelaar staat en de pomp langer dan een wachttijd (standaard 2 minuten) niet draait.
-- **FR-014**: Het systeem MOET de waarschuwing **"pomp pompt niet af"** geven wanneer de pomp draait en het niveau binnen een controletijd (standaard 3 minuten) niet met een minimale daling (standaard 2 cm) is gezakt.
-- **FR-015**: Het systeem MOET de waarschuwing **"pomp draait te lang"** geven wanneer de pomp langer dan de maximale looptijd (standaard 10 minuten) onafgebroken draait.
-- **FR-016**: Het systeem MOET een **storingsmelding** geven wanneer langer dan 5 minuten geen geldige niveaumeting beschikbaar is, of wanneer de stroommeting een onmogelijke waarde geeft.
+- **FR-013**: Het systeem MOET de waarschuwing **"pomp start niet"** geven wanneer het niveau meer dan een marge (standaard 5 cm) boven het verwachte inschakelniveau van de dompelschakelaar staat en de pomp langer dan een wachttijd (standaard 2 minuten) niet draait. (vervallen met 004)
+- **FR-014**: Het systeem MOET de waarschuwing **"pomp pompt niet af"** geven wanneer de pomp draait en het niveau binnen een controletijd (standaard 3 minuten) niet met een minimale daling (standaard 2 cm) is gezakt. (vervallen met 004)
+- **FR-015**: Het systeem MOET de waarschuwing **"pomp draait te lang"** geven wanneer de pomp langer dan de maximale looptijd (standaard 10 minuten) onafgebroken draait. (vervallen met 004)
+- **FR-016**: Het systeem MOET een **storingsmelding** geven wanneer langer dan 5 minuten geen geldige niveaumeting beschikbaar is. (gewijzigd door 004)
 - **FR-017**: Het systeem MOET de melding **"bewaking niet bereikbaar"** geven wanneer Home Assistant langer dan 5 minuten geen gegevens van het apparaat heeft ontvangen.
 - **FR-018**: Alle meldingen MOETEN via Home Assistant worden afgeleverd en daar als actieve melding zichtbaar zijn. Daarnaast signaleert het apparaat ter plaatse (FR-027). Het apparaat heeft geen display.
-- **FR-019**: Elke melding MOET in begrijpelijke taal vermelden: het soort melding (alarm, waarschuwing of storing), de vermoedelijke oorzaak, het actuele niveau, de pompstatus en sinds wanneer de situatie speelt.
+- **FR-019**: Elke melding MOET in begrijpelijke taal vermelden: het soort melding (alarm, waarschuwing of storing), de vermoedelijke oorzaak, het actuele niveau en sinds wanneer de situatie speelt. (gewijzigd door 004)
 - **FR-020**: Zolang een melding actief is, MOET Home Assistant die zichtbaar houden en de gebruiker op afstand hoogstens eens per herinneringsinterval (standaard 1 uur) opnieuw waarschuwen. Daartussen wordt de melding op afstand niet herhaald. De signalering ter plaatse (led) valt hier niet onder; die volgt FR-027. (gewijzigd door 002)
 - **FR-021**: Het systeem MOET een herstelmelding geven zodra de oorzaak van een melding is verdwenen. Bij niveaumeldingen geldt daarvoor een herstelmarge (standaard 5 procentpunt onder de drempel), zodat een melding niet steeds wisselt tussen actief en hersteld.
 - **FR-022**: Valt de niveaumeting uit terwijl het hoogwater-alarm actief is, dan MOET het alarm actief blijven totdat een geldige meting aantoont dat het niveau weer gezakt is.
 
 **Instellingen en betrouwbaarheid**
 
-- **FR-023**: De gebruiker MOET het leeg-niveau, het vol-niveau, het verwachte inschakelniveau van de dompelschakelaar, de drempels, marges en wachttijden uit FR-012 t/m FR-016 en de herstelmarge uit FR-021 vanuit Home Assistant kunnen instellen, zonder de put te openen en zonder het apparaat opnieuw te programmeren. Een gewijzigde instelling MOET binnen 1 minuut op het apparaat van kracht zijn. Het herinneringsinterval (FR-020) en de wachttijd voor "bewaking niet bereikbaar" (FR-017) worden in de Home Assistant-configuratie ingesteld. Interne filtertijden, zoals de bevestigingstijd van een storing van de stroomsensor en de herstelmarge van "pomp start niet", liggen vast in de firmware.
+- **FR-023**: De gebruiker MOET het leeg-niveau, het vol-niveau, de drempel en wachttijd uit FR-012, de wachttijd uit FR-016 en de herstelmarge uit FR-021 vanuit Home Assistant kunnen instellen, zonder de put te openen en zonder het apparaat opnieuw te programmeren. Een gewijzigde instelling MOET binnen 1 minuut op het apparaat van kracht zijn. Het herinneringsinterval (FR-020) en de wachttijd voor "bewaking niet bereikbaar" (FR-017) worden in de Home Assistant-configuratie ingesteld. Interne filtertijden liggen vast in de firmware. (gewijzigd door 004)
 - **FR-024**: Het apparaat MOET de laatst ontvangen geldige instellingen bewaren en na een stroomonderbreking of herstart direct weer gebruiken, ook als Home Assistant op dat moment niet bereikbaar is. Dit zijn de enige gegevens die het apparaat blijvend bewaart.
 - **FR-025**: Na een stroomonderbreking of herstart MOET het apparaat binnen 1 minuut zelfstandig weer meten en de actuele toestand aan Home Assistant doorgeven.
-- **FR-026**: Het systeem MOET belangrijke gebeurtenissen (pomp start/stop, begin en einde van meldingen, sensorstoringen, herstart van het apparaat) in Home Assistant zichtbaar maken, zodat de gebruiker achteraf kan nagaan wat er is gebeurd en welke sensor of oorzaak bij een storing hoort.
+- **FR-026**: Het systeem MOET belangrijke gebeurtenissen (begin en einde van meldingen, sensorstoringen, herstart van het apparaat) in Home Assistant zichtbaar maken, zodat de gebruiker achteraf kan nagaan wat er is gebeurd en welke sensor of oorzaak bij een storing hoort. (gewijzigd door 004)
 
 **Signalering ter plaatse**
 
-- **FR-027**: Het apparaat MOET met een statuslampje (led 1 van de ledbalk) via verschillende kleuren en knipperpatronen tonen: opstarten, normaal, pomp draait, geen verbinding met Home Assistant, storing, waarschuwing en alarm. Deze signalering MOET ook werken als de verbinding of Home Assistant niet beschikbaar is. (gewijzigd door 002) (gewijzigd door 003)
+- **FR-027**: Het apparaat MOET met een statuslampje (led 1 van de ledbalk) via verschillende kleuren en knipperpatronen tonen: opstarten, normaal, geen verbinding met Home Assistant, storing en alarm. Deze signalering MOET ook werken als de verbinding of Home Assistant niet beschikbaar is. (gewijzigd door 002) (gewijzigd door 003) (gewijzigd door 004)
 - **FR-028**: De gebruiker MOET de helderheid van de led vanuit Home Assistant kunnen instellen. (gewijzigd door 002) (gewijzigd door 003)
 
 ### Key Entities *(include if feature involves data)*
 
-- **Pompput-configuratie**: de vaste gegevens van de put en de bewaking: leeg-niveau, vol-niveau, verwacht inschakelniveau van de dompelschakelaar, alarmdrempel, marges, wachttijden, maximale looptijd en herinneringsinterval. Wordt beheerd in Home Assistant; het apparaat bewaart een kopie van de laatst geldige instellingen.
+- **Pompput-configuratie**: de vaste gegevens van de put en de bewaking: leeg-niveau, vol-niveau, alarmdrempel, herstelmarge, wachttijden en herinneringsinterval. (gewijzigd door 004) Wordt beheerd in Home Assistant; het apparaat bewaart een kopie van de laatst geldige instellingen.
 - **Niveaumeting**: een waarneming van het waterniveau op een bepaald moment: gemeten afstand, afgeleide waterhoogte (cm), vulgraad (%) en of de meting geldig is. Alleen de actuele waarde staat op het apparaat; het verloop wordt in Home Assistant opgeslagen.
-- **Pompstatus / pompcyclus**: of de pomp draait. Elke overgang van stil naar draaien en weer terug vormt een cyclus met een startmoment en een looptijd. De cycli worden in Home Assistant opgeslagen.
-- **Melding**: een gesignaleerde afwijking: soort (alarm, waarschuwing, storing), oorzaak, begin, einde, status (actief of hersteld) en het moment van de laatste herinnering. Meldingen worden in Home Assistant getoond en opgeslagen. Het apparaat houdt alleen de actuele toestand van elke melding bij, geen historie.
+- **Pompstatus / pompcyclus**: of de pomp draait. Elke overgang van stil naar draaien en weer terug vormt een cyclus met een startmoment en een looptijd. De cycli worden in Home Assistant opgeslagen. (vervallen met 004)
+- **Melding**: een gesignaleerde afwijking: soort (alarm of storing), oorzaak, begin, einde, status (actief of hersteld) en het moment van de laatste herinnering. Meldingen worden in Home Assistant getoond en opgeslagen. Het apparaat houdt alleen de actuele toestand van elke melding bij, geen historie. (gewijzigd door 004)
 
 ## Success Criteria *(mandatory)*
 
 ### Measurable Outcomes
 
 - **SC-001**: Bij 10 controlemetingen verspreid over het volledige bereik van de put wijkt de waterhoogte in Home Assistant maximaal 2 cm af van een handmatige meting.
-- **SC-002**: Gedurende een testperiode van 7 dagen met een werkende verbinding staat 100% van de pompstarts en -stops in Home Assistant, met een afwijking van maximaal 5 seconden ten opzichte van het werkelijke moment.
-- **SC-003**: Bij het nabootsen van elk van de vijf storingssituaties (niveau boven alarmdrempel, pomp zonder stroom, afgesloten uitlaat, langdurig draaiende pomp, apparaat losgekoppeld) ontvangt de gebruiker via Home Assistant binnen 1 minuut na afloop van de ingestelde wachttijd een melding met de juiste oorzaak.
+- **SC-002**: Gedurende een testperiode van 7 dagen met een werkende verbinding staat 100% van de pompstarts en -stops in Home Assistant, met een afwijking van maximaal 5 seconden ten opzichte van het werkelijke moment. (vervallen met 004)
+- **SC-003**: Bij het nabootsen van elk van de drie storingssituaties (niveau boven alarmdrempel, storing van de niveausensor, apparaat losgekoppeld) ontvangt de gebruiker via Home Assistant binnen 1 minuut na afloop van de ingestelde wachttijd een melding met de juiste oorzaak. (gewijzigd door 004)
 - **SC-004**: In 30 dagen normaal gebruik, inclusief regenbuien, komt er hoogstens 1 onterechte melding voor.
 - **SC-005**: Na een stroomonderbreking geeft het apparaat binnen 1 minuut weer actuele gegevens aan Home Assistant door, zonder handmatige handeling en zonder verlies van instellingen.
-- **SC-006**: De gebruiker kan de actuele vulgraad en pompstatus binnen 10 seconden aflezen in Home Assistant.
+- **SC-006**: De gebruiker kan de actuele vulgraad binnen 10 seconden aflezen in Home Assistant. (gewijzigd door 004)
 - **SC-007**: Als de bewaking wordt losgekoppeld of uitvalt, blijft de pomp in 100% van de testgevallen normaal aanslaan en afslaan op de eigen dompelschakelaar.
 - **SC-008**: Een in Home Assistant gewijzigde instelling is binnen 1 minuut van kracht. Na een herstart terwijl Home Assistant onbereikbaar is, meet en bewaakt het apparaat binnen 1 minuut weer met de laatst ingestelde waarden.
 - **SC-009**: Een nieuwe melding is binnen 5 seconden na activering zichtbaar op de statusled. Dit geldt ook zonder verbinding met Home Assistant. (gewijzigd door 002) (gewijzigd door 003)
@@ -217,10 +221,10 @@ elke situatie moet de juiste waarschuwing via Home Assistant binnenkomen.
 - Home Assistant is het enige kanaal voor historie en voor meldingen op afstand. Als Home Assistant niet beschikbaar is, signaleert alleen de led bij de put. (gewijzigd door 002) Een tweede meldkanaal op afstand valt buiten scope.
 - Omdat het apparaat geen meetgegevens bewaart, gaan gegevens uit een periode zonder verbinding verloren. Dat is acceptabel.
 - De pomp heeft een eigen dompel-/vlotterschakelaar die leidend blijft. Het systeem is uitsluitend bewakend en stuurt de pomp niet aan; automatisch schakelen van de pomp of een reservepomp valt buiten scope.
-- De stroommeting wordt zo aangebracht dat die de pomp niet beïnvloedt en elektrisch veilig is voor de netspanning van de pomp.
+- De stroommeting wordt zo aangebracht dat die de pomp niet beïnvloedt en elektrisch veilig is voor de netspanning van de pomp. (vervallen met 004)
 - De afstandsmeter hangt boven in de put met vrij zicht op het wateroppervlak. De put heeft over de meethoogte een gelijkmatige doorsnede, zodat waterhoogte en vulgraad recht evenredig zijn. Het volume in liters is niet nodig.
 - Het apparaat heeft een eigen voeding die niet wegvalt wanneer de beveiliging van de pomp afslaat. Bij een volledige stroomuitval in huis is bewaken niet mogelijk; noodstroom valt buiten scope voor deze versie.
-- Alle standaardwaarden (alarmdrempel 80%, wachttijd hoogwater 30 s, marge "pomp start niet" 5 cm / 2 min, controle "pomp pompt niet af" 2 cm daling in 3 min, maximale looptijd 10 min, sensorstoring na 5 min, "bewaking niet bereikbaar" na 5 min, herinnering elk uur, herstelmarge 5 procentpunt) zijn uitgangspunten die tijdens de installatie op de eigen put worden afgestemd.
-- Vaak aan- en afslaan (pendelen) is zichtbaar via de pompstarts in Home Assistant, maar levert in deze versie geen automatische melding op.
+- Alle standaardwaarden (alarmdrempel 80%, wachttijd hoogwater 30 s, sensorstoring na 5 min, "bewaking niet bereikbaar" na 5 min, herinnering elk uur, herstelmarge 5 procentpunt) zijn uitgangspunten die tijdens de installatie op de eigen put worden afgestemd. (gewijzigd door 004)
+- Vaak aan- en afslaan (pendelen) is zichtbaar via de pompstarts in Home Assistant, maar levert in deze versie geen automatische melding op. (vervallen met 004)
 - Gebruik bij vorst (ijs op het wateroppervlak) wordt in deze versie niet apart gedetecteerd.
 - Buiten scope: meerdere putten, energieverbruik in kWh, regenvoorspelling, en het aansturen van externe apparatuur.

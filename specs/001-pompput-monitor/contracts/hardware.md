@@ -2,8 +2,10 @@
 
 **Status**: ontwerp. Dit is de gezaghebbende bron voor pintoewijzing en elektrische aannames
 (constitutie, Embedded Platform Constraints). In de firmware staan de pinnen alleen in het
-`substitutions:`-blok van `esphome/pompput.yaml` (`pin_trig`, `pin_echo`, `pin_acs712`,
-`pin_led`), en dat blok volgt deze tabel. Een wijziging gebeurt hier en daar tegelijk.
+`substitutions:`-blok van `esphome/pompput.yaml` (`pin_trig`, `pin_echo`, `pin_led`), en dat
+blok volgt deze tabel. Een wijziging gebeurt hier en daar tegelijk.
+D1/A1 is vrij sinds 004-stroomsensor-verwijderen: de stroomsensor (ACS712) en de pompbewaking
+zijn vervallen ([specs/004-stroomsensor-verwijderen](../../004-stroomsensor-verwijderen/spec.md)).
 D5 is vrij sinds 002-zoemer-verwijderen: de piëzo-zoemer en de functie van de BOOT-knop zijn
 vervallen ([specs/002-zoemer-verwijderen](../../002-zoemer-verwijderen/spec.md)).
 Gewijzigd door [003](../../003-niveau-ledbalk/spec.md): zes leds in plaats van één. Het aantal
@@ -24,13 +26,13 @@ leds en hun volgorde staan in `led_aantal` en `led_index_1` … `led_index_6`.
 
 | XIAO-pin | GPIO | Richting | Functie | Aansluiting |
 |---|---|---|---|---|
-| D1 / A1 | 3 | analoog in | ACS712 OUT | via deler 10 kΩ (serie) / 10 kΩ (naar GND); optioneel 10 nF naar GND |
+| D1 / A1 | 3 | — | vrij (was ACS712 OUT, vervallen met 004) | — |
 | D2 | 4 | uit | HC-SR04 TRIG | rechtstreeks (3,3 V, bankverificatie) |
 | D3 | 5 | in | HC-SR04 ECHO | via deler 1 kΩ (serie) / 2 kΩ (naar GND) → ≈ 3,33 V (of 1,8 kΩ → ≈ 3,21 V) |
 | D4 | 6 | uit | DIN van led 1 van een keten van 6 SK6812-RGBW-leds | 330 Ω in serie |
 | D5 | 7 | — | vrij (was piëzo-zoemer, vervallen met 002) | — |
 | D9 | 9 | — | BOOT-knop op het board, geen functie in de firmware | alleen voor de downloadmodus bij het opstarten |
-| 5V | — | voeding | HC-SR04 VCC, ACS712 VCC, VDD van de zes leds via diode 1N4001 | 5 V van USB-C |
+| 5V | — | voeding | HC-SR04 VCC, VDD van de zes leds via diode 1N4001 | 5 V van USB-C |
 | GND | — | — | gemeenschappelijke massa | alle modules |
 | D0, D6, D7, D8, D10 | 2, 21, 20, 8, 10 | — | vrij | niet gebruikt |
 
@@ -50,23 +52,22 @@ GND ──────────── GND
 - Het vol-niveau ligt minstens 20 cm onder de sensor.
 - Bescherm de printplaat tegen vocht, met alleen de transducers open.
 
-### ACS712, 30 A-variant (pompstroom), netspanning
+### Een bestaande stroomsensor weghalen
 
-```text
-230 V fase (L) ──▶ IP+ ┤ ACS712 ├ IP− ──▶ fase naar de pomp      (N en PE ongewijzigd)
-5V ── VCC         OUT ──[10 kΩ]──┬── A1 (GPIO3)
-GND ── GND                       ├─[10 kΩ]── GND
-                                 └─[10 nF]── GND (optioneel)
-```
+Tot en met firmware 0.4.0 zat er een ACS712 in de fasedraad van de pomp, met OUT via een deler
+10 kΩ / 10 kΩ op A1. Sinds 004 leest de firmware die sensor niet meer (004 FR-012, FR-015).
 
-- Alleen de **fasedraad** gaat door de sensor. N en PE blijven ongewijzigd.
-- De netspanningskant komt in een aparte, afgesloten behuizing met trekontlasting. De
-  pompgroep is beveiligd met een aardlekschakelaar.
-- Aansluiten op netspanning gebeurt door of onder toezicht van een vakbekwaam persoon.
-- Verwacht signaal op A1:
-  - bij 0 A ongeveer 1,25 V;
-  - de AC-amplitude is gevoeligheid × √2 × I_rms × 0,5. Voorbeeld: de 30 A-variant
-    (66 mV/A) bij 3 A geeft ongeveer ±0,14 V.
+1. **Blijven zitten mag.** De firmware configureert A1 niet; de pin krijgt via de deler
+   hoogstens ongeveer 2,5 V, binnen het bereik van een 3,3 V-ingang (004 research R5).
+2. **Weghalen is werk aan netspanning.** Dat gebeurt door of onder toezicht van een vakbekwaam
+   persoon, met de pompgroep spanningsloos.
+3. **Verbind de fasedraad weer door.** De fase naar de pomp liep door de sensor (IP+ → IP−).
+   Maak een geschikte, geïsoleerde verbinding in een afgesloten behuizing met trekontlasting.
+   N en PE blijven ongewijzigd.
+4. **Controleer de pomp.** Zet de groep weer aan en controleer dat de pomp op zijn eigen vlotter
+   aanslaat en afslaat (001 SC-007).
+5. **Laagspanningskant.** Haal de deler en de draden naar A1, 5V en GND van de sensor weg, of
+   laat ze los en geïsoleerd achter.
 
 ### Ledketen (6 × SK6812 RGBW, ledbalk)
 
@@ -93,9 +94,9 @@ D4 (GPIO6) ──[330 Ω]── DIN led 1   DOUT led 1 ── DIN led 2   …   
 
 - 5 V USB-C-adapter van minimaal 1 A.
 - Verbruik: XIAO met WiFi ongeveer 100 mA (pieken tot ongeveer 350 mA), HC-SR04 ongeveer
-  15 mA, ACS712 ongeveer 10 mA, de zes leds samen hoogstens ongeveer 146 mA (led 1 paars en
-  vijf blauwe balkleds op 100 %; de firmware gebruikt nooit volledig wit op meerdere leds).
-  Totaal ongeveer 520 mA piek; een adapter van 1 A blijft voldoende (003 research R4).
+  15 mA, de zes leds samen hoogstens ongeveer 146 mA (led 1 paars en vijf blauwe balkleds op
+  100 %; de firmware gebruikt nooit volledig wit op meerdere leds).
+  Totaal ongeveer 510 mA piek; een adapter van 1 A blijft voldoende (003 research R4).
 - De adapter hangt aan een groep die **niet** uitvalt als de beveiliging van de pomp afslaat.
 
 ## Veilige begintoestand (constitutie III)
@@ -107,7 +108,9 @@ Bij het opstarten zijn de uitgangen in een veilige toestand voordat de logica dr
   nooit uit flash hersteld); daarna led 1 wit als opstartindicatie via `on_boot`, en de
   niveaubalk uit tot er een geldige niveaumeting is (003 FR-007, FR-012);
 - GPIO7 (D5) wordt niet geconfigureerd; een nog aangesloten passieve zoemer blijft stil
-  (002 research R2).
+  (002 research R2);
+- GPIO3 (A1) wordt niet geconfigureerd; een nog aangesloten ACS712 geeft via de deler
+  hoogstens ongeveer 2,5 V (004 research R5).
 
 De firmware heeft geen uitgang die de pomp kan beïnvloeden (FR-007, constitutie III).
 GPIO9 (BOOT-knop) is een strapping-pin. De firmware leest de pin niet meer (sinds 002); de

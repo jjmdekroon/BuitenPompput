@@ -18,7 +18,6 @@ De uitkomsten komen in `specs/003-niveau-ledbalk/verificatie.md`.
 - Een testbak of een plank die je op bekende hoogtes onder de afstandsmeter kunt houden, en
   een rolmaat. Met de put-maten in HA reken je uit welke afstand bij welke vulgraad hoort, of
   lees je de Vulgraad direct af in HA.
-- Een belasting op de stroomsensor (zoals 001 §4 #8) voor "pomp draait".
 
 ## 2. Compile- en resource-gate
 
@@ -52,7 +51,8 @@ De uitkomsten komen in `specs/003-niveau-ledbalk/verificatie.md`.
 **Eerst de bank-controles uit [research.md](research.md#te-controleren-op-de-bank)**:
 - **B1 Partities**: bij "normaal" brandt led 1 blauw terwijl er niets anders aan de strip is
   ingeschakeld.
-- **B2 Gamma**: laat een waarschuwing ontstaan (#7); led 1 is oranje, niet rood.
+- **B2 Gamma**: laat een storing van de niveausensor ontstaan (#12); led 1 is paars, niet blauw
+  (gewijzigd door 004: het oranje van een waarschuwing bestaat niet meer).
 - **B3 Kleurvolgorde**: led 1 is bij "normaal" blauw, niet groen of wit.
 - **B4 Ketenvolgorde**: bij een stijgend niveau gaat de led naast led 1 als eerste aan.
 
@@ -60,15 +60,15 @@ Stel de alarmdrempel in op **80 %** (standaard), tenzij anders vermeld.
 
 | # | Scenario | Handeling | Verwacht | Spec |
 |---|---|---|---|---|
-| 1 | Normaal, leeg | Niveau op het leeg-niveau, pomp stil, HA verbonden | Led 1 continu blauw; led 2–6 uit | US1 scen. 1, FR-002, FR-013 |
+| 1 | Normaal, leeg | Niveau op het leeg-niveau, HA verbonden | Led 1 continu blauw; led 2–6 uit | US1 scen. 1, FR-002, FR-013 |
 | 2 | Balk per grens | Breng de vulgraad achtereenvolgens op 0, 10, 20, 35, 48, 50, 66 en 85 % (lees af in HA; 48 % precies op een grens) | Aantal brandende leds (incl. led 1): 1, 1, 2, 3, 4, 4, 5, 6. De leds gaan van onder naar boven aan. Samen met #18 zijn dat 10 controleniveaus | US1 scen. 1, 2, 4, FR-004, FR-006, SC-001 |
 | 3 | Balk zakt | Ga terug van 85 % naar 10 % | De leds gaan van boven naar onder uit; de balk is steeds aaneengesloten | US1 scen. 5, FR-006 |
 | 4 | Led 6 vóór het alarm | Breng het niveau op 82 % en kijk binnen de wachttijd (30 s) | Led 6 brandt binnen 5 s; led 1 nog blauw (geen alarm) | US1 scen. 3, FR-005, FR-009 |
 | 5 | Alarm | Houd 82 % langer dan 30 s vast | Led 1 snel rood binnen 5 s na het actief worden; led 2–6 blijven blauw | US2 scen. 2, FR-003 |
 | 6 | Alarm, niveau zakt | Laat het niveau zakken tot 77 % (onder de drempel, boven de herstelgrens) | Led 6 uit; led 1 blijft rood tot het alarm bij 75 % herstelt, daarna continu blauw | randgeval "alarm actief, niveau zakt", FR-005 |
-| 7 | Waarschuwing | Laat "pomp start niet" ontstaan (001 §4 #10) | Led 1 oranje 500/500 ms; balk toont het niveau | US2 scen. 3, 5, FR-003 |
-| 8 | Pomp draait | Zet de belasting 10 s aan, dan uit (geen andere melding) | Led 1 knippert blauw 1 s aan / 1 s uit; na het stoppen binnen 5 s weer continu blauw | US2 scen. 7, FR-014 |
-| 9 | Pomp en waarschuwing | Laat de pomp draaien terwijl een waarschuwing actief is | Led 1 oranje, niet blauw knipperend | US2 scen. 8, FR-003, FR-014 |
+| 7 | (vervallen) | — | Waarschuwing en pomp draait zijn vervallen met specs/004-stroomsensor-verwijderen | — |
+| 8 | (vervallen) | — | Waarschuwing en pomp draait zijn vervallen met specs/004-stroomsensor-verwijderen | — |
+| 9 | (vervallen) | — | Waarschuwing en pomp draait zijn vervallen met specs/004-stroomsensor-verwijderen | — |
 | 10 | Geen verbinding | Stop HA of zet de WiFi uit; daarna #5 | Led 1 wit flits per 2 s, bij het alarm snel rood binnen 5 s; de balk toont het niveau door | US2 scen. 6, FR-009, SC-002 |
 | 11 | Opstarten | Onderbreek de voeding en zet hem terug | Eerst alles uit, dan led 1 wit en balk uit; na de eerste geldige meting led 1 blauw en de balk aan | US3 scen. 1, FR-007, FR-012 |
 | 12 | Niveau onbekend en sensorstoring | Laat Wachttijd sensorstoring op de standaard 5 min staan en koppel de ECHO-draad los; noteer het moment. Wacht daarna tot "Niveausensor storing" actief wordt (zoals 001 §4 #28) | De eerste 30 s: geen verandering (laatste geldige niveau). Uiterlijk 35 s na het loskoppelen: led 1 paars knipperend (500/1500 ms) en led 2–6 uit, terwijl HA nog status `normaal` en Vulgraad onbekend toont. Bij de storingsmelding: led 1 blijft ononderbroken paars knipperen. Na het aansluiten: binnen 5 s weer de balk en led 1 blauw | US3 scen. 2, 4, 5, FR-007, FR-017, SC-005 |
@@ -78,8 +78,8 @@ Stel de alarmdrempel in op **80 %** (standaard), tenzij anders vermeld.
 | 16 | Andere alarmdrempel | Zet de alarmdrempel op 60 % en houd de vulgraad op 50 % | Binnen 1 min branden led 1–5 (grenzen 12/24/36/48 %); bij 61 % ook led 6. Zet daarna terug op 80 % | US1 scen. 6, FR-010 |
 | 17 | Helderheid | Zet Led-helderheid op 80 %, dan 10 %, dan 0 %; bij 0 % ook #5 | Alle zes leds volgen binnen 1 s. Bij 0 % alles uit; bij een alarm alleen led 1 rood op 10 % | FR-011 |
 | 18 | Onder leeg en boven vol | Breng het niveau iets onder het leeg-niveau, daarna boven het vol-niveau | Onder leeg: alleen led 1. Boven vol: alle zes leds | randgevallen |
-| 19 | Overige bewaking | Voer 001 §4 #4, #8 en #10 uit en kijk in HA | Meldingen, pompstarts en herstelmeldingen in HA zoals voorheen | FR-016 |
-| 20 | Verbruik | Meet de stroom uit de adapter bij #2 op 85 % met helderheid 100 % en led 1 paars door een storing van de **stroomsensor** (onderbreek de voeding van de ACS712, 001 §4 #13; een storing van het niveau zet de balk uit) | Alle zes leds aan; hoogstens ongeveer 0,6 A (research R4) | FR-015, research R4 |
+| 19 | Overige bewaking | Voer 001 §4 #4 uit en kijk in HA | Meldingen en herstelmeldingen in HA zoals voorheen | FR-016 |
+| 20 | Verbruik | Meet de stroom uit de adapter bij #5 (82 %, alarm actief) met helderheid 100 %. Sinds 004 is dat het zwaarste geval: led 1 paars met een volle balk komt niet meer voor, want paars betekent een ongeldig niveau en dan is de balk uit | Alle zes leds aan (led 1 rood, led 2–6 blauw); hoogstens ongeveer 0,6 A (research R4) | FR-015, research R4 |
 
 ## 5. Documentatie (FR-015)
 
@@ -97,7 +97,7 @@ dichtst bij het apparaat, en de nieuwe ledtabel.
 |---|---|
 | FR-001 | §1; §4 B4, #2 |
 | FR-002 | §4 #1 |
-| FR-003 | §4 #5, #7, #9, #10 |
+| FR-003 | §4 #5, #10, #12 |
 | FR-004 | §4 #2 |
 | FR-005 | §4 #4, #6 |
 | FR-006 | §4 #2, #3 |
@@ -108,13 +108,13 @@ dichtst bij het apparaat, en de nieuwe ledtabel.
 | FR-011 | §4 #17 |
 | FR-012 | §3 stap 2; §4 #11 |
 | FR-013 | §2 stap 3; §4 #1 |
-| FR-014 | §4 #8, #9 |
+| FR-014 | vervallen met 004 |
 | FR-015 | §5; §4 #20 |
 | FR-016 | §3 stap 3; §4 #19 |
 | FR-017 | §4 #12, #13; 001 quickstart §4 #27 (kort paars na een herstart van de niveaumeting) |
 | SC-001 | §4 #2, #18 |
 | SC-002 | §4 #4, #5, #10 |
 | SC-003 | §4 #15 |
-| SC-004 | §4 #5, #7, #8, #10, #11, #12 |
+| SC-004 | §4 #5, #10, #11, #12 |
 | SC-005 | §4 #12–#14 |
 | SC-006 | §4 #2 (een tweede persoon zegt bij 35, 50 en 85 % binnen 5 s hoeveel stappen het niveau van de alarmdrempel af is) |

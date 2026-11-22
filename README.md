@@ -1,26 +1,21 @@
 # Pompput-monitor
 
-Bewaking van een buitenpompput. Een HC-SR04 meet het waterniveau, en een ACS712 ziet aan de
-stroom of de pomp draait. Daarmee bepaalt het apparaat zelf de meldingen (hoogwater, pomp start
-niet, pomp pompt niet af, pomp draait te lang, sensorstoringen, niet ingesteld) en geeft alles
-via de versleutelde native API van ESPHome door aan Home Assistant. Zes RGBW-leds signaleren
+Bewaking van een buitenpompput. Een HC-SR04 meet het waterniveau. Daarmee bepaalt het apparaat
+zelf de meldingen (hoogwater, sensorstoring, niet ingesteld) en geeft alles via de versleutelde
+native API van ESPHome door aan Home Assistant. Zes RGBW-leds signaleren
 ter plaatse, ook zonder Home Assistant: led 1 de toestand, led 2–6 het waterniveau. Het apparaat stuurt de pomp **nooit** aan.
 
 Ontwerp en eisen: [specs/001-pompput-monitor/](specs/001-pompput-monitor/) (spec, plan,
 data-model, contracten, quickstart, verificatie) en
 [specs/002-zoemer-verwijderen/](specs/002-zoemer-verwijderen/) (de zoemer is vervallen) en
-[specs/003-niveau-ledbalk/](specs/003-niveau-ledbalk/) (zes leds met een niveaubalk).
+[specs/003-niveau-ledbalk/](specs/003-niveau-ledbalk/) (zes leds met een niveaubalk) en
+[specs/004-stroomsensor-verwijderen/](specs/004-stroomsensor-verwijderen/) (de stroomsensor en de
+pompbewaking zijn vervallen).
 
 > **⚠️ Veiligheid: 230 V**
 >
-> De ACS712 zit in serie met de **fasedraad** van de pomp en staat dus op netspanning.
-> - Alleen de fase gaat door de sensor; N en PE blijven ongewijzigd.
-> - Monteer de netspanningskant in een aparte, afgesloten behuizing met trekontlasting, op een
->   groep met aardlekschakelaar.
-> - Laat het aansluiten op netspanning doen of controleren door een **vakbekwaam persoon**.
->   Goedkope ACS712-modules hebben beperkte kruipwegen.
->
-> Zie [contracts/hardware.md](specs/001-pompput-monitor/contracts/hardware.md) en research R7.
+> Heb je nog een ACS712 in de fasedraad van de pomp? Lees dan eerst
+> [Een bestaande stroomsensor weghalen](#een-bestaande-stroomsensor-weghalen) hieronder.
 
 ## Platform
 
@@ -30,18 +25,18 @@ data-model, contracten, quickstart, verificatie) en
 | Framework | `esp-idf` (de eigen ESP-IDF-toolchain van ESPHome; PlatformIO is niet nodig) |
 | Board | Seeed Studio XIAO ESP32C3 (`esp32: variant: esp32c3`) |
 | Koppeling met HA | ESPHome native API met versleuteling; updates via WiFi (OTA) met dezelfde sleutel |
-| Componenten | `ultrasonic`, `adc`, `ct_clamp`, `esp32_rmt_led_strip`, `partition`, `template`, `globals`, `script`, `interval`, `debug`, `wifi_signal`, `uptime` |
+| Componenten | `ultrasonic`, `esp32_rmt_led_strip`, `partition`, `template`, `globals`, `script`, `interval`, `debug`, `wifi_signal`, `uptime` |
 | Externe componenten | geen |
 
 Het hele apparaat staat in één bestand: [esphome/pompput.yaml](esphome/pompput.yaml), met
-genummerde secties (instellingen, basis, niveau, pomp, meldingen, instellingen in HA,
+zeven genummerde secties (instellingen, basis, niveau, meldingen, instellingen in HA,
 signalering, gebeurtenissen).
 
 **Pinnen en elektrische aannames**: de gezaghebbende bron is
 [specs/001-pompput-monitor/contracts/hardware.md](specs/001-pompput-monitor/contracts/hardware.md).
 In de firmware staan de pinnen alleen in het `substitutions:`-blok bovenaan
-[esphome/pompput.yaml](esphome/pompput.yaml) (`pin_trig`, `pin_echo`, `pin_acs712`,
-`pin_led`); wijzig ze altijd op beide plaatsen tegelijk.
+[esphome/pompput.yaml](esphome/pompput.yaml) (`pin_trig`, `pin_echo`, `pin_led`); wijzig ze
+altijd op beide plaatsen tegelijk.
 
 ## Aansluiten
 
@@ -52,8 +47,8 @@ Samenvatting voor het solderen. De gezaghebbende bron blijft
 - **Board**: de pinnamen (D0–D10, A0–A2) zijn de opdruk van de **Seeed XIAO ESP32C3**, met
   de bijbehorende GPIO-nummers. Andere ESP32-C3-boards (SuperMini, DevKitM-1, …) hebben een
   andere opdruk en indeling.
-- **Niet 5 V-tolerant**: de GPIO's van de ESP32-C3 kunnen geen 5 V aan. De 5 V-signalen van de
-  HC-SR04 (ECHO) en de ACS712 (OUT) gaan daarom via een weerstandsdeler.
+- **Niet 5 V-tolerant**: de GPIO's van de ESP32-C3 kunnen geen 5 V aan. Het 5 V-signaal van de
+  HC-SR04 (ECHO) gaat daarom via een weerstandsdeler.
 
 ### Overzicht
 
@@ -63,15 +58,11 @@ Samenvatting voor het solderen. De gezaghebbende bron blijft
 | HC-SR04 | TRIG | D2 | 4 | rechtstreeks (veilig; of 3,3 V als "hoog" telt, op de bank controleren) |
 | HC-SR04 | ECHO | D3 | 5 | deler: 1 kΩ in serie, 2 kΩ naar GND |
 | HC-SR04 | GND | GND | — | |
-| ACS712 30 A | VCC | 5V | — | |
-| ACS712 30 A | OUT | D1 / A1 | 3 | deler: 10 kΩ in serie, 10 kΩ naar GND (optioneel 10 nF naar GND) |
-| ACS712 30 A | GND | GND | — | |
-| ACS712 30 A | IP+ / IP− | — | — | in serie met de **fase** naar de pomp (**230 V**) |
 | 6 × RGBW-led (SK6812), keten | VDD | 5V | — | via een diode **1N4001**; elko 100 µF bij led 1, 100 nF per led |
 | 6 × RGBW-led (SK6812), keten | DIN van led 1 | D4 | 6 | 330 Ω in serie; DOUT van elke led naar DIN van de volgende |
 | 6 × RGBW-led (SK6812), keten | GND | GND | — | |
 
-Vrij: D0 (GPIO2), D5 (GPIO7), D6 (GPIO21), D7 (GPIO20), D8 (GPIO8), D10 (GPIO10). De BOOT-knop
+Vrij: D0 (GPIO2), D1/A1 (GPIO3), D5 (GPIO7), D6 (GPIO21), D7 (GPIO20), D8 (GPIO8), D10 (GPIO10). De BOOT-knop
 op het board (D9) heeft geen functie in de firmware.
 
 ### Pinnen van de XIAO
@@ -81,8 +72,8 @@ Bovenaanzicht, USB-C boven. Controleer de opdruk op je board.
 ```text
                           USB-C
                      ┌────┴┴┴┴────┐
-          (vrij)  D0 │ ●        ● │ 5V    → 5 V-rail: HC-SR04, ACS712, leds (via diode)
-  ACS712 OUT ──▶  D1 │ ●        ● │ GND   → GND-rail: alle onderdelen
+          (vrij)  D0 │ ●        ● │ 5V    → 5 V-rail: HC-SR04, leds (via diode)
+          (vrij)  D1 │ ●        ● │ GND   → GND-rail: alle onderdelen
   HC-SR04 TRIG ◀─ D2 │ ●        ● │ 3V3     (niet gebruikt)
   HC-SR04 ECHO ─▶ D3 │ ●        ● │ D10     (vrij)
   led 1 DIN    ◀─ D4 │ ●        ● │ D9      BOOT-knop (op het board, geen functie)
@@ -111,17 +102,6 @@ werkt het, maar controleer het op de bank: "Afstand (ruw)" moet kloppende waarde
 Werkt het niet betrouwbaar, gebruik dan een HC-SR04P of RCWL-1601. Die werkt op 3,3 V: voed
 hem uit de 3V3-pin en laat de ECHO-deler weg.
 
-**ACS712, 30 A-variant (pompstroom), op netspanning.** Lees eerst de veiligheidswaarschuwing
-bovenaan. Alleen de fasedraad gaat door de sensor.
-
-```text
-230 V fase (L) ──▶ IP+ ┤ ACS712 ├ IP− ──▶ fase naar de pomp     (N en PE ongewijzigd)
-
-5V ── VCC         OUT ──[10 kΩ]──┬── D1/A1 (GPIO3)
-GND ── GND                       ├─[10 kΩ]── GND
-                                 └─[10 nF]── GND (optioneel, tegen ruis)
-```
-
 **Ledbalk: zes RGBW-leds (SK6812) in een keten.** Door de diode is VDD ongeveer 4,3 V.
 Daardoor is het 3,3 V-datasignaal van de XIAO een geldig "hoog", zonder level shifter. Led 1 is
 de eerste in de keten (het dichtst bij het apparaat); hang de balk verticaal met led 1 onder en
@@ -140,20 +120,38 @@ D4 (GPIO6) ──[330 Ω]── DIN led 1   DOUT led 1 ── DIN led 2   …   
 ### Voeding
 
 - Een 5 V USB-C-adapter van minimaal 1 A in de USB-C van de XIAO. De 5V-pin van de XIAO voedt
-  de HC-SR04, de ACS712 en (via de diode) de zes leds.
-- Verbruik: XIAO tot ongeveer 350 mA piek, sensoren ongeveer 25 mA, de leds samen hoogstens
-  ongeveer 146 mA (op 100 % helderheid). Totaal ongeveer 520 mA piek, dus 1 A is ruim genoeg.
+  de HC-SR04 en (via de diode) de zes leds.
+- Verbruik: XIAO tot ongeveer 350 mA piek, de HC-SR04 ongeveer 15 mA, de leds samen hoogstens
+  ongeveer 146 mA (op 100 % helderheid). Totaal ongeveer 510 mA piek, dus 1 A is ruim genoeg.
 - Alle GND's komen samen op de GND van de XIAO.
 - Hang de adapter aan een groep die **niet** uitvalt als de beveiliging van de pomp afslaat.
 
+### Een bestaande stroomsensor weghalen
+
+Tot en met firmware 0.4.0 zat er een ACS712 in de fasedraad van de pomp. Sinds 0.5.0 leest de
+firmware die sensor niet meer
+([004](specs/004-stroomsensor-verwijderen/spec.md)).
+
+1. **Blijven zitten mag.** De firmware gebruikt D1/A1 niet; de pin krijgt via de deler
+   hoogstens ongeveer 2,5 V.
+2. **Weghalen is werk aan 230 V.** Laat het doen door of onder toezicht van een
+   **vakbekwaam persoon**, met de groep van de pomp uitgeschakeld.
+3. **Verbind de fasedraad weer door.** De fase naar de pomp liep door de sensor (IP+ → IP−).
+   Maak een geschikte, geïsoleerde verbinding in een afgesloten behuizing met trekontlasting.
+   N en PE blijven ongewijzigd.
+4. **Controleer de pomp.** Zet de groep weer aan en kijk of de pomp op zijn eigen vlotter
+   aanslaat en afslaat.
+5. **Laagspanningskant.** Haal de deler en de draden naar D1/A1, 5V en GND van de sensor weg,
+   of laat ze los en geïsoleerd achter.
+
+Details: [contracts/hardware.md](specs/001-pompput-monitor/contracts/hardware.md#een-bestaande-stroomsensor-weghalen).
+
 ### Controle voor het eerste gebruik
 
-1. Meet zonder stroom door de ACS712 ongeveer **1,25 V** op D1/A1. Meet je 2,5 V, dan
-   ontbreekt de deler. Meet je 0 V, dan krijgt de ACS712 geen voeding.
-2. Kijk na of de 2 kΩ van de ECHO-deler echt aan **GND** zit. Zonder die verbinding komt er
+1. Kijk na of de 2 kΩ van de ECHO-deler echt aan **GND** zit. Zonder die verbinding komt er
    bijna 5 V op D3, en dat kan de pin beschadigen. Zitten de 1 kΩ en de 2 kΩ omgekeerd, dan
    komt er maar ongeveer 1,7 V op D3: niet schadelijk, maar de sensor meet dan niets.
-3. Kijk na of de diode van de leds goed om zit: de streep wijst naar de leds.
+2. Kijk na of de diode van de leds goed om zit: de streep wijst naar de leds.
 
 ## Bouwen en flashen
 
@@ -202,6 +200,8 @@ esphome/secrets.example.yaml   voorbeeld van de geheimen; secrets.yaml staat in 
 homeassistant/                 HA-pakket (meldingen, herinneringen, onbereikbaar) en dashboard
 specs/001-pompput-monitor/     spec, plan, research, data-model, contracten, quickstart, taken
 specs/002-zoemer-verwijderen/  het vervallen van de zoemer: spec, plan, taken, verificatie
+specs/003-niveau-ledbalk/      de ledbalk met zes leds: spec, plan, taken, verificatie
+specs/004-stroomsensor-verwijderen/  het vervallen van de stroomsensor en de pompbewaking
 requirements.txt               de vastgepinde ESPHome-versie
 ```
 
@@ -219,8 +219,8 @@ requirements.txt               de vastgepinde ESPHome-versie
 4. **Vul de notifier in**: vervang in dat bestand elke `REPLACE_ME` door je eigen
    notify-service zonder `notify.`, bijvoorbeeld `mobile_app_mijn_telefoon`.
 5. Herstart Home Assistant. Het apparaat staat op `niet_ingesteld`.
-6. Vul onder *Configuratie* van het apparaat **Afstand leeg**, **Afstand vol** en
-   **Inschakelniveau** in (zie quickstart §5 voor de kalibratie in de put).
+6. Vul onder *Configuratie* van het apparaat **Afstand leeg** en **Afstand vol** in (zie
+   quickstart §5 voor de kalibratie in de put).
 7. Optioneel: het voorbeelddashboard
    [homeassistant/dashboard-pompput.yaml](homeassistant/dashboard-pompput.yaml).
 
@@ -235,11 +235,9 @@ het apparaat.
 | Led 1 | Betekenis |
 |---|---|
 | rood, snel knipperen | alarm (hoogwater) |
-| oranje, 1 Hz | waarschuwing (pomp) |
 | paars, kort per 2 s | storing, niet ingesteld, of het niveau is onbekend (meting weggevallen) |
 | wit, continu | opstarten |
 | wit, flits per 2 s | geen verbinding met Home Assistant |
-| blauw, 1 s aan / 1 s uit | pomp draait |
 | blauw, continu | normaal |
 
 **Led 2–6: het waterniveau**, als een blauwe balk in vijf gelijke stappen tot de alarmdrempel.

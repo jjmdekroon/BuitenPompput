@@ -25,16 +25,17 @@ Geen wijziging. De niveaubalk heeft geen eigen instelling.
 | `led_index_1` … `led_index_6` | 0 … 5 (positie in de keten) | FR-001 |
 | `niveaubalk_stappen` | 5 | FR-004 |
 | `niveaubalk_herstelmarge_pct` | 2,0 procentpunt | FR-008 |
-| `led_pomp_aan_ms` / `led_pomp_uit_ms` | 1000 / 1000 (was – / 0) | FR-014 |
 | `led_normaal_uit_ms` | 0, continu (was 4900) | FR-002, FR-013 |
 
-**Vervallen constanten**: `led_normaal_aan_ms` en de kleur `led_groen_*` (research R3).
+**Vervallen constanten**: `led_normaal_aan_ms` en de kleur `led_groen_*` (research R3). Met 004
+vervallen ook `led_pomp_aan_ms` / `led_pomp_uit_ms`, de kleur `led_oranje_*` en het ritme
+`led_waarschuwing_*`.
 
 ## 2. Signaleringstoestand (`IndicationState`, 001 §7)
 
 | Veld | Was | Wordt | In ESPHome |
 |---|---|---|---|
-| `led_patroon` | één van 7 patronen op de enige led | keuze nu op **led 1**, met één extra regel: na het opstarten en zonder bruikbaar niveau het patroon storing ("niveau onbekend", direct onder opstarten). "Normaal" is continu blauw, "pomp draait" knippert blauw 1 s / 1 s | `led_patroon_kiezen` → `led_knipperen` op partitie `statusled`; `g_led_patroon` |
+| `led_patroon` | één van 7 patronen op de enige led | keuze nu op **led 1**, met één extra regel: na het opstarten en zonder bruikbaar niveau het patroon storing ("niveau onbekend", direct onder opstarten). "Normaal" is continu blauw. Na 004 zijn er zes patronen, zonder "waarschuwing" en "pomp draait" ([004 data-model.md §5](../004-stroomsensor-verwijderen/data-model.md#5-signaleringstoestand-indicationstate-001-7-en-003-data-model)) | `led_patroon_kiezen` → `led_knipperen` op partitie `statusled`; `g_led_patroon` |
 | `led_helderheid` | uit `led_helderheid_pct`, minimaal 10 % bij alarm | ongewijzigd, voor led 1 | `g_led_helderheid` |
 | `opstarten`, `verbonden` | hulpwaarden | ongewijzigd | `g_opstarten`, `g_verbonden` |
 | `niveaubalk_aantal` | — | **nieuw**: aantal brandende balkleds, 0–5 (§3) | `g_niveaubalk_aantal` (`uint8_t`, niet bewaard, begin 0) |
