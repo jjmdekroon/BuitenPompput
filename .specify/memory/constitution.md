@@ -25,7 +25,7 @@ for a device that is mounted in a pump pit.
   `interval`) or component update intervals.
 - Time arithmetic in lambdas MUST use `millis()` with unsigned subtraction
   (`now - last >= interval`), so it survives the ~49.7-day rollover.
-- Behavior with more than two states (level status, pump status, alert lifecycle) MUST be an
+- Behavior with more than two states (level status, alert lifecycle) MUST be an
   explicit state machine: named states held in `globals` (or a `select`), with the
   transitions kept together in named scripts or automations.
 - Project code MUST NOT install its own interrupt service routines; interrupts are used only
@@ -61,9 +61,8 @@ alarm, and a monitor failure must never stop the pump.
 
 ### IV. Declarative, Traceable Logic
 
-- All decision logic (level validity, pump detection, alerts, local indication, settings
-  validation) MUST live in named scripts, automations and template entities in the ESPHome
-  YAML. Lambdas MUST stay short (one decision or one calculation) and MUST NOT duplicate logic
+- All decision logic (level validity, alerts, local indication, settings validation) MUST live
+  in named scripts, automations and template entities in the ESPHome YAML. Lambdas MUST stay short (one decision or one calculation) and MUST NOT duplicate logic
   that exists elsewhere in the configuration.
 - Every script, automation or template entity that implements a requirement MUST carry a
   comment naming the requirement id(s) it implements (for example `# FR-012`).
@@ -115,7 +114,7 @@ every tunable makes it safe to change, and visible faults make an unattended dev
   LED) MUST keep working without WiFi, Home Assistant or a serial monitor. ESPHome's
   automatic reboot timeouts (`wifi: reboot_timeout`, `api: reboot_timeout`) MUST be disabled
   unless the plan justifies otherwise, so losing the network never resets an active alarm.
-- **Mains**: any part on mains voltage (the ACS712 current sensor) is measurement only, MUST be
+- **Mains**: any part on mains voltage is measurement only, MUST be
   documented with its safety requirements in the hardware contract, and is connected by or
   under supervision of a qualified person.
 - **Logging**: log verbosity MUST be set by one `logger` level setting. Delivered firmware runs
@@ -158,4 +157,4 @@ carry a short comment explaining why.
   design and again after it; `/speckit-analyze` MUST flag violations as CRITICAL; deviations
   are allowed only when justified in the plan's Complexity Tracking table.
 
-**Version**: 2.0.1 | **Ratified**: 2026-11-03 | **Last Amended**: 2026-11-11
+**Version**: 2.0.2 | **Ratified**: 2026-11-03 | **Last Amended**: 2026-11-18

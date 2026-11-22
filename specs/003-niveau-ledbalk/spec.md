@@ -16,9 +16,13 @@ de beschrijving van de signalering ter plaatse en het aansluitschema van spec 00
 
 ### Session 2026-11-11
 
-- Q: "Pomp draait" was continu blauw en valt samen met de nieuwe normale kleur van led 1. Moet de pompstatus bij de put herkenbaar blijven? → A: Ja, met een eigen patroon op led 1: langzaam blauw knipperen (1 s aan / 1 s uit).
+- Q: "Pomp draait" was continu blauw en valt samen met de nieuwe normale kleur van led 1. Moet de pompstatus bij de put herkenbaar blijven? → A: Ja, met een eigen patroon op led 1: langzaam blauw knipperen (1 s aan / 1 s uit). (vervallen met 004)
 - Q: Bij welk waterniveau moeten led 2 t/m led 5 aangaan? → A: In gelijke stappen tussen het leeg-niveau en de alarmdrempel (bij 80%: 16, 32, 48 en 64%; led 6 op 80%). Geen vaste stappen van 20% en geen instelling per led.
 - Q: Bij een weggevallen meting is het niveau na 30 s "verouderd", maar de storingsmelding komt pas na de wachttijd (standaard 5 min). Led 1 zou dan blauw zijn met de balk uit, net als bij een lege put. Wat moet led 1 dan tonen? → A: Het storingspatroon (paars knipperen), ook als de storingsmelding nog niet actief is; buiten de opstartfase, met een prioriteit direct onder opstarten.
+
+### Session 2026-11-18 (004-stroomsensor-verwijderen)
+
+- De stroomsensor en de pompbewaking vervallen; led 1 toont geen "pomp draait" en geen "waarschuwing" meer. Zie [specs/004-stroomsensor-verwijderen](../004-stroomsensor-verwijderen/spec.md).
 
 ## Begrippen
 
@@ -28,9 +32,9 @@ de beschrijving van de signalering ter plaatse en het aansluitschema van spec 00
 - **Niveaubalk**: led 2 t/m led 6. Toont hoe hoog het water staat ten opzichte van de
   alarmdrempel.
 - **Statuspatroon**: een van de vooraf gedefinieerde kleuren en knipperpatronen uit spec 001:
-  alarm (rood), waarschuwing (oranje), storing (paars), opstarten (wit) en geen verbinding (wit),
-  plus "pomp draait" met het nieuwe patroon uit FR-014 (langzaam blauw knipperen) en "niveau
-  onbekend" met het patroon van storing (FR-017).
+  alarm (rood), storing (paars), opstarten (wit) en geen verbinding (wit), plus "niveau
+  onbekend" met het patroon van storing (FR-017). (gewijzigd door 004: waarschuwing en "pomp
+  draait" vervallen)
 - **Vulgraad**: het niveau in procenten, met 0% = leeg-niveau en 100% = vol-niveau (spec 001
   FR-002). De alarmdrempel is ook een vulgraad (standaard 80%).
 
@@ -70,20 +74,20 @@ ik bij de put zowel het niveau als een eventueel probleem.
 story zou de gebruiker bij de put geen alarm of storing meer zien.
 
 **Independent Test**: Boots met de ledbalk aangesloten achtereenvolgens opstarten, een
-hoogwater-alarm, een pompwaarschuwing, een sensorstoring en het wegvallen van de verbinding met
-Home Assistant na. Controleer dat led 1 telkens het bijbehorende statuspatroon toont en daarna
+hoogwater-alarm, een sensorstoring en het wegvallen van de verbinding met Home Assistant na.
+(gewijzigd door 004) Controleer dat led 1 telkens het bijbehorende statuspatroon toont en daarna
 weer continu blauw wordt.
 
 **Acceptance Scenarios**:
 
 1. **Gegeven** er is geen statuspatroon actief, **wanneer** ik naar led 1 kijk, **dan** brandt die continu blauw.
 2. **Gegeven** het hoogwater-alarm wordt actief, **wanneer** ik naar led 1 kijk, **dan** knippert die snel rood zoals beschreven in spec 001, in plaats van blauw.
-3. **Gegeven** er is tegelijk een waarschuwing en een storing actief, **wanneer** ik naar led 1 kijk, **dan** toont die de waarschuwing (oranje), volgens de bestaande prioriteit.
+3. **Gegeven** er is tegelijk een alarm en een storing actief, **wanneer** ik naar led 1 kijk, **dan** toont die het alarm (rood), volgens de bestaande prioriteit. (gewijzigd door 004)
 4. **Gegeven** een statuspatroon is actief, **wanneer** de oorzaak verdwijnt, **dan** wordt led 1 binnen 5 seconden weer continu blauw.
 5. **Gegeven** led 1 toont een statuspatroon, **wanneer** ik naar led 2 t/m led 6 kijk, **dan** tonen die gewoon het niveau (behalve bij een ongeldige meting, zie User Story 3).
 6. **Gegeven** de verbinding met Home Assistant is weg, **wanneer** er een alarm actief wordt, **dan** toont led 1 het alarm toch binnen 5 seconden.
-7. **Gegeven** er is geen ander statuspatroon actief, **wanneer** de pomp gaat draaien, **dan** knippert led 1 langzaam blauw (1 s aan / 1 s uit), en wordt die binnen 5 seconden na het stoppen van de pomp weer continu blauw.
-8. **Gegeven** de pomp draait en er is een waarschuwing actief, **wanneer** ik naar led 1 kijk, **dan** toont die de waarschuwing (oranje), omdat die een hogere prioriteit heeft dan "pomp draait".
+7. **Gegeven** er is geen ander statuspatroon actief, **wanneer** de pomp gaat draaien, **dan** knippert led 1 langzaam blauw (1 s aan / 1 s uit), en wordt die binnen 5 seconden na het stoppen van de pomp weer continu blauw. (vervallen met 004)
+8. **Gegeven** de pomp draait en er is een waarschuwing actief, **wanneer** ik naar led 1 kijk, **dan** toont die de waarschuwing (oranje), omdat die een hogere prioriteit heeft dan "pomp draait". (vervallen met 004)
 
 ---
 
@@ -142,7 +146,7 @@ aangeven, het stroomverbruik van zes leds meenemen en per led-grens een testscen
 - **Meting valt weg, storingsmelding nog niet actief**: het niveau is na 30 s verouderd, de storingsmelding komt pas na de wachttijd. In die tijd knippert led 1 al paars en is de balk uit (FR-017). In Home Assistant is de status dan nog "normaal" en het niveau "onbekend"; dat verandert niet.
 - **Niveaumeting opnieuw gestart** (met de knop "Niveaumeting opnieuw starten" of na een gewijzigde afstand leeg of vol): het niveau is enkele seconden onbekend terwijl het opnieuw wordt ingeleerd. Led 1 knippert dan kort paars en de balk is uit (FR-017); daarna wordt led 1 weer blauw en toont de balk het niveau. Dit is geen storing.
 - **Een led in het midden van de balk is defect**: led 1 blijft werken, omdat die het dichtst bij het apparaat zit. Leds na de defecte led kunnen ook uitvallen; dat wordt niet gedetecteerd of gemeld (zie Assumptions).
-- **Pomp draait**: het oude patroon "pomp draait" (continu blauw) zou samenvallen met de nieuwe normale kleur van led 1. Daarom krijgt "pomp draait" een eigen patroon: langzaam blauw knipperen (FR-014). Een pomp die kort aan- en uitgaat, laat led 1 wisselen tussen knipperen en continu blauw; dat is gewenst, omdat het de werkelijke pompstatus volgt.
+- **Pomp draait**: het oude patroon "pomp draait" (continu blauw) zou samenvallen met de nieuwe normale kleur van led 1. Daarom krijgt "pomp draait" een eigen patroon: langzaam blauw knipperen (FR-014). Een pomp die kort aan- en uitgaat, laat led 1 wisselen tussen knipperen en continu blauw; dat is gewenst, omdat het de werkelijke pompstatus volgt. (vervallen met 004)
 
 ## Requirements *(mandatory)*
 
@@ -150,7 +154,7 @@ aangeven, het stroomverbruik van zes leds meenemen en per led-grens een testscen
 
 - **FR-001**: De signalering ter plaatse MOET bestaan uit zes leds in een vaste volgorde: led 1 (onder) t/m led 6 (boven). Led 1 is het statuslampje, led 2 t/m led 6 vormen de niveaubalk.
 - **FR-002**: Led 1 MOET continu blauw branden zolang er geen statuspatroon actief is.
-- **FR-003**: Zodra een statuspatroon actief is (alarm, waarschuwing, storing, opstarten, niveau onbekend, geen verbinding of pomp draait), MOET led 1 dat patroon tonen in plaats van blauw. Kleuren, knipperpatronen en de onderlinge prioriteit blijven gelijk aan spec 001, behalve FR-013, FR-014 en FR-017; de volledige tabel staat in [contracts/ledbalk.md §1](contracts/ledbalk.md#1-led-1-statuslampje). Bij meerdere actieve toestanden wint de toestand met de hoogste prioriteit.
+- **FR-003**: Zodra een statuspatroon actief is (alarm, storing, opstarten, niveau onbekend of geen verbinding), MOET led 1 dat patroon tonen in plaats van blauw. Kleuren, knipperpatronen en de onderlinge prioriteit blijven gelijk aan spec 001, behalve FR-013 en FR-017; de volledige tabel staat in [contracts/ledbalk.md §1](contracts/ledbalk.md#1-led-1-statuslampje). Bij meerdere actieve toestanden wint de toestand met de hoogste prioriteit. (gewijzigd door 004)
 - **FR-004**: Led 2 t/m led 6 MOETEN het niveau tonen als een balk van continu blauwe leds. Led *n* (n = 2 t/m 6) brandt wanneer de vulgraad minstens (n − 1) / 5 × de alarmdrempel is: vijf gelijke stappen tussen het leeg-niveau en de alarmdrempel. De grenzen zijn niet per led instelbaar. Bij de standaard-alarmdrempel van 80% betekent dat:
 
   | Led | Brandt vanaf vulgraad |
@@ -170,16 +174,16 @@ aangeven, het stroomverbruik van zes leds meenemen en per led-grens een testscen
 - **FR-011**: De helderheid die de gebruiker in Home Assistant instelt, MOET voor alle zes leds gelden. De minimale helderheid bij een alarm (spec 001) blijft gelden voor led 1.
 - **FR-012**: Alle zes leds MOETEN vanaf het vroegste moment bij het opstarten uit zijn en daarna de opstartfase tonen volgens FR-003 en FR-007.
 - **FR-013**: Het statuspatroon "normaal" (groene flits) vervalt; de normale toestand is voortaan led 1 continu blauw.
-- **FR-014**: Het statuspatroon "pomp draait" MOET op led 1 te herkennen zijn als langzaam blauw knipperen: 1 seconde aan, 1 seconde uit. Het houdt zijn plaats in de prioriteit van spec 001: onder "geen verbinding" en boven de normale toestand.
+- **FR-014**: Het statuspatroon "pomp draait" MOET op led 1 te herkennen zijn als langzaam blauw knipperen: 1 seconde aan, 1 seconde uit. Het houdt zijn plaats in de prioriteit van spec 001: onder "geen verbinding" en boven de normale toestand. (vervallen met 004)
 - **FR-015**: Het aansluitschema, de beschrijving van de voeding, de beschrijving van de signalering ter plaatse, de testprocedure op het apparaat en de README MOETEN de ledbalk met zes leds beschrijven, inclusief de volgorde van de leds, het stroomverbruik en een testscenario per grens van de niveaubalk.
-- **FR-016**: Deze wijziging MAG geen gevolgen hebben voor de overige bewaking: niveaumeting, pompdetectie, de meldingen in Home Assistant, herinneringen, herstelmeldingen en het bewaren van instellingen werken ongewijzigd.
+- **FR-016**: Deze wijziging MAG geen gevolgen hebben voor de overige bewaking: niveaumeting, de meldingen in Home Assistant, herinneringen, herstelmeldingen en het bewaren van instellingen werken ongewijzigd. (gewijzigd door 004)
 - **FR-017**: Is na de opstartfase het niveau niet bruikbaar (onbekend, verouderd, storing of niet ingesteld), dan MOET led 1 het patroon van storing tonen (paars, 500 ms aan / 1500 ms uit), ook als de storingsmelding van spec 001 nog niet actief is. Dit "niveau onbekend" staat in de prioriteit direct onder opstarten en boven geen verbinding; alarm en waarschuwing gaan voor. De meldingen en de status in Home Assistant veranderen hierdoor niet.
 
 ### Key Entities *(include if feature involves data)*
 
 - **Ledbalk**: de zes leds bij de put. Led 1 is het statuslampje, led 2 t/m led 6 de niveaubalk. Heeft één instelbare helderheid.
 - **Grens van de niveaubalk**: per led 2 t/m 6 de vulgraad waarbij die led aangaat. Afgeleid van de alarmdrempel; geen eigen instelling.
-- **Statuspatroon**: de bestaande toestanden met kleur, knipperpatroon en prioriteit uit spec 001, zonder "normaal", met een nieuw patroon voor "pomp draait" (FR-014) en met de nieuwe toestand "niveau onbekend" (FR-017).
+- **Statuspatroon**: de bestaande toestanden met kleur, knipperpatroon en prioriteit uit spec 001, zonder "normaal" en met de nieuwe toestand "niveau onbekend" (FR-017). (gewijzigd door 004: zonder "waarschuwing" en "pomp draait")
 
 ## Success Criteria *(mandatory)*
 
@@ -188,7 +192,7 @@ aangeven, het stroomverbruik van zes leds meenemen en per led-grens een testscen
 - **SC-001**: Bij 10 controleniveaus verspreid van leeg tot boven de alarmdrempel klopt het aantal brandende leds in 100% van de gevallen met de tabel in FR-004.
 - **SC-002**: Een niveauverandering over een grens en een nieuw statuspatroon zijn binnen 5 seconden zichtbaar, ook zonder verbinding met Home Assistant.
 - **SC-003**: Bij een niveau dat 10 minuten binnen 1 procentpunt rond een grens schommelt, verandert de betreffende led hoogstens één keer van toestand.
-- **SC-004**: Bij het nabootsen van opstarten, alarm, elke pompwaarschuwing, sensorstoring, geen verbinding en een draaiende pomp toont led 1 in 100% van de gevallen het juiste statuspatroon, en is led 1 binnen 5 seconden na herstel weer continu blauw.
+- **SC-004**: Bij het nabootsen van opstarten, alarm, sensorstoring en geen verbinding toont led 1 in 100% van de gevallen het juiste statuspatroon, en is led 1 binnen 5 seconden na herstel weer continu blauw. (gewijzigd door 004)
 - **SC-005**: Bij een ongeldige niveaumeting zijn led 2 t/m led 6 in 100% van de gevallen uit en is led 1 nooit continu blauw, uiterlijk 35 seconden nadat de meting is weggevallen.
 - **SC-006**: Een gebruiker die de uitleg van de ledbalk één keer heeft gelezen, kan bij de put binnen 5 seconden zeggen hoeveel stappen (van de vijf) het niveau van de alarmdrempel af is, en of het de alarmdrempel heeft bereikt.
 

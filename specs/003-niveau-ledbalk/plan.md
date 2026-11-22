@@ -4,6 +4,8 @@
 
 **Input**: Feature specification from `specs/003-niveau-ledbalk/spec.md`
 
+**Bijgewerkt**: de stroomsensor en de pompbewaking zijn vervallen met [specs/004-stroomsensor-verwijderen](../004-stroomsensor-verwijderen/plan.md).
+
 ## Summary
 
 De enkele RGBW-statusled is vervangen door een keten van zes RGBW-leds. Led 1 blijft het

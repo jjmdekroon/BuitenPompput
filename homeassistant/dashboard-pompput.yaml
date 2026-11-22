@@ -1,4 +1,4 @@
-# Voorbeelddashboard voor de pompput-monitor (SC-006: vulgraad en pompstatus binnen 10 s af te lezen).
+# Voorbeelddashboard voor de pompput-monitor (SC-006: de vulgraad binnen 10 s af te lezen).
 #
 # Gebruik: maak in Home Assistant een nieuw dashboard, open "Ruwe configuratie-editor" en plak
 # dit bestand. Of voeg alleen de kaarten onder `cards:` toe aan een bestaande weergave.
@@ -21,14 +21,8 @@ views:
             name: Vulgraad
           - entity: sensor.pompput_waterhoogte
             name: Waterhoogte
-          - entity: binary_sensor.pompput_pomp
-            name: Pomp
           - entity: sensor.pompput_status
             name: Status
-          - entity: sensor.pompput_pompstarts_24_uur
-            name: Pompstarts 24 uur
-          - entity: sensor.pompput_looptijd_laatste_pompbeurt
-            name: Looptijd laatste pompbeurt
           - entity: sensor.pompput_laatste_gebeurtenis
             name: Laatste gebeurtenis
 
@@ -38,10 +32,9 @@ views:
         entities:
           - entity: sensor.pompput_waterhoogte
             name: Waterhoogte
-          - entity: binary_sensor.pompput_pomp
-            name: Pomp
 
-      # FR-026: wat er is gebeurd (pompbeurten, meldingen, herstart, afgewezen instellingen)
+      # FR-026: wat er is gebeurd (meldingen, herstart, afgewezen instellingen, herstart van de
+      # niveaumeting)
       - type: logbook
         title: Gebeurtenissen
         hours_to_show: 48
@@ -68,20 +61,11 @@ views:
               label: Put
             - number.pompput_afstand_leeg
             - number.pompput_afstand_vol
-            - number.pompput_inschakelniveau
             - type: section
               label: Hoogwater
             - number.pompput_alarmdrempel
             - number.pompput_wachttijd_hoogwater
             - number.pompput_herstelmarge
-            - type: section
-              label: Pomp
-            - number.pompput_marge_pomp_start_niet
-            - number.pompput_wachttijd_pomp_start_niet
-            - number.pompput_controletijd_afpompen
-            - number.pompput_minimale_daling_afpompen
-            - number.pompput_maximale_looptijd_pomp
-            - number.pompput_stroomdrempel_pomp
             - type: section
               label: Apparaat
             - number.pompput_wachttijd_sensorstoring
@@ -90,8 +74,6 @@ views:
             - type: section
               label: Diagnose
             - sensor.pompput_afstand_ruw
-            - sensor.pompput_offset_stroomsensor
-            - sensor.pompput_pompstroom
             - sensor.pompput_wifi_signaal
             - sensor.pompput_uptime
             - sensor.pompput_herstartreden

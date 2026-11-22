@@ -1,8 +1,7 @@
 # Pompput-monitor: bewaakt een pompput buiten.
-# - Een HC-SR04 meet van bovenaf het waterniveau; een ACS712 in de fasedraad ziet of de pomp
-#   draait.
-# - Het apparaat bepaalt zelf zeven meldingen: hoogwater, drie pompwaarschuwingen, twee
-#   sensorstoringen en "niet ingesteld".
+# - Een HC-SR04 meet van bovenaf het waterniveau.
+# - Het apparaat bepaalt zelf drie meldingen: hoogwater, een storing van de niveausensor en
+#   "niet ingesteld".
 # - Ter plaatse signaleren zes RGBW-leds: led 1 de toestand, led 2-6 het waterniveau. Home
 #   Assistant krijgt alles via de versleutelde native API.
 # - Het apparaat bewaakt alleen. Het heeft geen uitgang naar de pomp (FR-007).
@@ -11,17 +10,16 @@
 #   1. substitutions: pinnen, constanten, grenzen, standaardwaarden en codes
 #   2. basis: esphome (on_boot), esp32, preferences, logger, wifi, api, ota, debug
 #   3. niveau: ultrasonic, niveau_verwerken, waterhoogte, vulgraad, afstand (ruw)
-#   4. pomp: adc, ct_clamp, pomp_bijwerken, pomp, looptijd, pompstroom, offset
-#   5. meldingen: melding_stap, de beoordelingsscripts, de zeven meldingen, status
-#   6. instellingen: globals, numbers, instelling_toepassen
-#   7. signalering: ledbalk, patroonscripts
-#   8. gebeurtenissen en diagnose: event, Laatste gebeurtenis, diagnose
+#   4. meldingen: melding_stap, de beoordelingsscripts, de drie meldingen, status
+#   5. instellingen: globals, numbers, instelling_toepassen
+#   6. signalering: ledbalk, patroonscripts
+#   7. gebeurtenissen en diagnose: event, Laatste gebeurtenis, diagnose
 # ESPHome staat een sleutel als `sensor:` maar één keer toe. Sectie 1 en 2 staan daarom
-# bovenaan, en de secties 3-8 zijn elk een pakket in dit bestand (packages:); ESPHome voegt hun
+# bovenaan, en de secties 3-7 zijn elk een pakket in dit bestand (packages:); ESPHome voegt hun
 # lijsten samen. Een id komt maar in één sectie voor.
 #
-# Spec, plan, contracten en validatie: specs/001-pompput-monitor/, specs/002-zoemer-verwijderen/
-# en specs/003-niveau-ledbalk/
+# Spec, plan, contracten en validatie: specs/001-pompput-monitor/, specs/002-zoemer-verwijderen/,
+# specs/003-niveau-ledbalk/ en specs/004-stroomsensor-verwijderen/
 # Pinnen: specs/001-pompput-monitor/contracts/hardware.md is gezaghebbend.
 # Elk script en elke entiteit noemt de requirements die het uitvoert (FR-0xx).
 
@@ -34,7 +32,7 @@ substitutions:
   # ---- Apparaat ----
   device_name: "pompput"           # hostnaam pompput.local
   friendly_name: "Pompput"         # naam in Home Assistant; de entity-id's volgen hieruit
-  project_version: "0.4.0"
+  project_version: "0.5.0"
   log_level: "INFO"                # INFO bij levering; DEBUG alleen voor validatie
   log_tag: "pompput"
   # ESPHome schrijft gewijzigde instellingen binnen 0,5 s naar flash, zodat een stroomonderbreking
@@ -42,12 +40,13 @@ substitutions:
   flash_write_interval: "500ms"
 
   # ---- Pinnen (contracts/hardware.md) ----
-  pin_acs712: "GPIO3"              # D1/A1, ADC1; ACS712 OUT via deler 10k/10k
   pin_trig: "GPIO4"                # D2; HC-SR04 TRIG, rechtstreeks
   pin_echo: "GPIO5"                # D3; HC-SR04 ECHO via deler 1k/2k
   pin_led: "GPIO6"                 # D4; DIN van led 1 van 6 (SK6812-keten) via 330 ohm
   # D5 (GPIO7) is vrij en wordt niet geconfigureerd; D9 (GPIO9) is de BOOT-knop op het board,
   # zonder functie in de firmware (002 research R2).
+  # D1/A1 (GPIO3) is vrij en wordt niet geconfigureerd (research R5 van
+  # 004-stroomsensor-verwijderen): een nog aangesloten ACS712 doet geen kwaad.
 
   # ---- Niveau (data-model §1-§3, research R6) ----
   ping_interval: "250ms"           # vier metingen per seconde
@@ -65,23 +64,8 @@ substitutions:
   niveau_verouderd_ms: "30000"     # zonder geaccepteerde mediaan "onbekend" na 30 s (FR-003)
   publicatie_interval: "10s"       # waterhoogte, vulgraad en diagnose elke 10 s naar HA
 
-  # ---- Pomp (data-model §4, research R7) ----
-  adc_interval: "100ms"
-  adc_demping: "12db"              # 0 tot ongeveer 2,5 V op de ESP32-C3; 11db is verouderd
-  stroom_venster: "100ms"          # ct_clamp: 5 perioden van 50 Hz per meting
-  stroom_interval: "500ms"
-  offset_venster: "10"             # gemiddelde van 10 ADC-waarden = de DC-offset
-  offset_elke: "5"
-  acs712_a_per_v: "30.303"         # 1 / (0,066 V/A x 0,5): 30 A-variant, deler 10k/10k
-  pomp_debounce_ms: "2000"         # 2 s aaneengesloten voor een start of stop (FR-011)
-  pomp_uit_factor: "0.7"           # uit onder 70 % van de drempel (hysterese)
-  offset_min_v: "0.9"              # offset buiten 0,9-1,6 V = onmogelijke waarde (FR-016)
-  offset_max_v: "1.6"
-  offset_storing_ms: "10000"       # storing na 10 s, herstel na 10 s
-
   # ---- Meldingen (data-model §5) ----
   verwerking_interval: "1s"        # niveau en meldingen elke seconde
-  start_niet_herstel_cm: "2.0"     # herstelmarge van "pomp start niet"
   geometrie_min_verschil_cm: "10.0"  # afstand_leeg_cm >= afstand_vol_cm + 10
   herstart_melden_na: "3s"         # gebeurtenis "herstart" 3 s na de eerste verbinding
   opstarten_max: "10s"             # witte led hoogstens 10 s
@@ -94,9 +78,6 @@ substitutions:
   afstand_vol_cm_min: "3"
   afstand_vol_cm_max: "390"
   afstand_vol_cm_stap: "0.1"
-  inschakelniveau_cm_min: "0"
-  inschakelniveau_cm_max: "400"
-  inschakelniveau_cm_stap: "0.1"
   alarmdrempel_pct_min: "10"
   alarmdrempel_pct_max: "120"
   alarmdrempel_pct_stap: "1"
@@ -105,26 +86,6 @@ substitutions:
   hoogwater_wachttijd_s_max: "600"
   hoogwater_wachttijd_s_stap: "1"
   hoogwater_wachttijd_s_std: "30"
-  start_marge_cm_min: "0"
-  start_marge_cm_max: "50"
-  start_marge_cm_stap: "1"
-  start_marge_cm_std: "5"
-  start_wachttijd_s_min: "10"
-  start_wachttijd_s_max: "3600"
-  start_wachttijd_s_stap: "1"
-  start_wachttijd_s_std: "120"
-  afpomp_controletijd_s_min: "30"
-  afpomp_controletijd_s_max: "3600"
-  afpomp_controletijd_s_stap: "1"
-  afpomp_controletijd_s_std: "180"
-  afpomp_min_daling_cm_min: "0.5"
-  afpomp_min_daling_cm_max: "50"
-  afpomp_min_daling_cm_stap: "0.1"
-  afpomp_min_daling_cm_std: "2"
-  max_looptijd_min_min: "1"
-  max_looptijd_min_max: "240"
-  max_looptijd_min_stap: "1"
-  max_looptijd_min_std: "10"
   sensorstoring_wachttijd_s_min: "30"
   sensorstoring_wachttijd_s_max: "3600"
   sensorstoring_wachttijd_s_stap: "1"
@@ -133,10 +94,6 @@ substitutions:
   herstelmarge_pct_max: "50"
   herstelmarge_pct_stap: "1"
   herstelmarge_pct_std: "5"
-  pomp_stroomdrempel_a_min: "0.05"
-  pomp_stroomdrempel_a_max: "20"
-  pomp_stroomdrempel_a_stap: "0.05"
-  pomp_stroomdrempel_a_std: "0.5"
   led_helderheid_pct_min: "0"
   led_helderheid_pct_max: "100"
   led_helderheid_pct_stap: "1"
@@ -152,8 +109,8 @@ substitutions:
   led_index_5: "4"
   led_index_6: "5"
   led_kleurvolgorde: "GRBW"        # SK6812 RGBW; op de bank controleren (research R9)
-  # Lineair: de kleuren uit het contract (bijvoorbeeld oranje 255,80,0) en de helderheid komen
-  # zo op de led. Met de standaard-gamma van 2,8 zou oranje vrijwel rood worden.
+  # Lineair: de kleuren uit het contract (bijvoorbeeld paars 160,0,255) en de helderheid komen
+  # zo op de led. Met de standaard-gamma van 2,8 zou paars vrijwel blauw worden.
   led_gamma: "1.0"
   led_min_helderheid_alarm: "0.10" # een alarm is nooit onzichtbaar (FR-028)
   # Kleuren als fractie (0-1) per kanaal R, G, B, W.
@@ -161,10 +118,6 @@ substitutions:
   led_rood_g: "0.0"
   led_rood_b: "0.0"
   led_rood_w: "0.0"
-  led_oranje_r: "1.0"
-  led_oranje_g: "0.314"            # 80/255
-  led_oranje_b: "0.0"
-  led_oranje_w: "0.0"
   led_paars_r: "0.627"             # 160/255
   led_paars_g: "0.0"
   led_paars_b: "1.0"
@@ -180,16 +133,11 @@ substitutions:
   # Ritmes in ms. Een continu patroon heeft _uit_ms 0.
   led_alarm_aan_ms: "125"
   led_alarm_uit_ms: "125"
-  led_waarschuwing_aan_ms: "500"
-  led_waarschuwing_uit_ms: "500"
   led_storing_aan_ms: "500"
   led_storing_uit_ms: "1500"
   led_opstarten_uit_ms: "0"
   led_geen_verbinding_aan_ms: "100"
   led_geen_verbinding_uit_ms: "1900"
-  # Pomp draait: blauw 1 s aan / 1 s uit (003 FR-014)
-  led_pomp_aan_ms: "1000"
-  led_pomp_uit_ms: "1000"
   # Normaal: continu blauw (003 FR-002, FR-013)
   led_normaal_uit_ms: "0"
   # Led 2-6: vijf gelijke stappen tot de alarmdrempel (003 FR-004)
@@ -203,50 +151,32 @@ substitutions:
   niveau_geldig: "1"
   niveau_verouderd: "2"
   niveau_storing: "3"
-  # Pompstatus (data-model §4).
-  pomp_onbekend: "0"
-  pomp_stil: "1"
-  pomp_start_kandidaat: "2"
-  pomp_draait: "3"
-  pomp_stop_kandidaat: "4"
   # Fase van een melding (data-model §5).
   fase_inactief: "0"
   fase_in_afwachting: "1"
   fase_actief: "2"
-  # Meldingsnummer: de volgorde van data-model §5, ook het bitnummer in g_actieve_set.
+  # Meldingsnummer: de volgorde van 004 data-model §3, ook het bitnummer in g_actieve_set.
   idx_hoogwater: "0"
-  idx_pomp_start_niet: "1"
-  idx_pomp_pompt_niet_af: "2"
-  idx_pomp_draait_te_lang: "3"
-  idx_niveausensor_storing: "4"
-  idx_stroomsensor_storing: "5"
-  idx_niet_ingesteld: "6"
-  aantal_meldingen: "7"
+  idx_niveausensor_storing: "1"
+  idx_niet_ingesteld: "2"
+  aantal_meldingen: "3"
   # Bitgroepen in g_actieve_set.
   bits_alarm: "0x01"               # bit 0
-  bits_waarschuwing: "0x0E"        # bits 1-3
-  bits_storing: "0x70"             # bits 4-6
+  bits_storing: "0x06"             # bits 1-2
   # Ledpatroon, in volgorde van prioriteit (contracts/ledbalk.md §1; 'niveau onbekend' gebruikt
   # led_patroon_storing).
   led_patroon_geen: "0"            # dwingt een nieuwe keuze af
   led_patroon_alarm: "1"
-  led_patroon_waarschuwing: "2"
-  led_patroon_storing: "3"
-  led_patroon_opstarten: "4"
-  led_patroon_geen_verbinding: "5"
-  led_patroon_pomp: "6"
-  led_patroon_normaal: "7"
+  led_patroon_storing: "2"
+  led_patroon_opstarten: "3"
+  led_patroon_geen_verbinding: "4"
+  led_patroon_normaal: "5"
 
   # ---- Omrekening ----
   ms_per_s: "1000"
-  ms_per_min: "60000"
   pct_schaal: "100.0"
 
   # ---- Gedeelde uitdrukkingen (één definitie, constitutie IV) ----
-  # De pomp draait: DRAAIT of STOP_KANDIDAAT (data-model §4).
-  pomp_draait_nu: "(id(g_pomp_status) == ${pomp_draait} || id(g_pomp_status) == ${pomp_stop_kandidaat})"
-  # De pomp staat stil: STIL of START_KANDIDAAT.
-  pomp_staat_stil: "(id(g_pomp_status) == ${pomp_stil} || id(g_pomp_status) == ${pomp_start_kandidaat})"
   # Het niveau is bruikbaar voor een beslissing: GELDIG en een waterhoogte.
   niveau_bruikbaar: "(id(g_niveau_status) == ${niveau_geldig} && !std::isnan(id(g_hoogte_cm)))"
   # De ingestelde led-helderheid als 0-1; de standaardwaarde zolang de instelling nog onbekend
@@ -272,10 +202,9 @@ esphome:
     then:
       # 1. "Ingesteld" uit de bewaarde instellingen (FR-024).
       - script.execute: ingesteld_bepalen
-      # 2. De vijf instellingen met regels publiceren hun waarde, of "onbekend" (FR-023).
+      # 2. De vier instellingen met regels publiceren hun waarde, of "onbekend" (FR-023).
       - component.update: afstand_leeg_cm
       - component.update: afstand_vol_cm
-      - component.update: inschakelniveau_cm
       - component.update: alarmdrempel_pct
       - component.update: herstelmarge_pct
       # 3. Beginwaarden: status normaal en geen enkele melding actief. De eerste beoordeling
@@ -285,9 +214,7 @@ esphome:
           id: status
           state: "normaal"
       - lambda: |-
-          for (auto *melding : {id(hoogwater), id(pomp_start_niet), id(pomp_pompt_niet_af),
-                                id(pomp_draait_te_lang), id(niveausensor_storing),
-                                id(stroomsensor_storing), id(niet_ingesteld)}) {
+          for (auto *melding : {id(hoogwater), id(niveausensor_storing), id(niet_ingesteld)}) {
             melding->publish_state(false);
           }
       # 4. Wit: opstarten, tot de eerste geldige niveaumeting en hoogstens opstarten_max.
@@ -359,7 +286,7 @@ ota:
     # Geen eigen sleutel: OTA gebruikt de API-sleutel uit secrets.yaml (research R3).
     encryption:
 
-# Diagnose: herstartreden (sectie 8).
+# Diagnose: herstartreden (sectie 7).
 debug:
 
 packages:
@@ -665,208 +592,7 @@ packages:
           - component.update: afstand_ruw
 
   # -------------------------------------------------------------------------------------------
-  # ---- 4. Pomp ----
-  # -------------------------------------------------------------------------------------------
-  # FR-006 t/m FR-009, FR-011, FR-016; data-model §4, research R7
-  # Alleen meten: de ACS712 zit in de fasedraad, maar het apparaat heeft geen uitgang naar de
-  # pomp (FR-007).
-  pomp:
-    globals:
-      # De DC-offset van de ACS712 (rust ongeveer 1,25 V op de pin) en of die mogelijk is.
-      - id: g_offset_v
-        type: float
-        restore_value: false
-        initial_value: 'NAN'
-      - id: g_offset_ok
-        type: bool
-        restore_value: false
-        initial_value: 'true'
-      # De lopende pompcyclus (data-model §4).
-      - id: g_pomp_start_ms
-        type: uint32_t
-        restore_value: false
-        initial_value: '0'
-      - id: g_pomp_stop_kandidaat_ms
-        type: uint32_t
-        restore_value: false
-        initial_value: '0'
-      - id: g_niveau_start_cm
-        type: float
-        restore_value: false
-        initial_value: 'NAN'
-      # NAN tot de eerste stop; wordt alleen bij een stop gepubliceerd.
-      - id: g_looptijd_s
-        type: float
-        restore_value: false
-        initial_value: 'NAN'
-      - id: g_stroom_a
-        type: float
-        restore_value: false
-        initial_value: 'NAN'
-
-    sensor:
-      # FR-006, FR-016
-      # Eén ADC op A1 met twee rollen: bron voor ct_clamp (die leest de pin zelf, zonder deze
-      # filters), en het gemiddelde hier is de DC-offset voor de storingscontrole.
-      - platform: adc
-        id: acs712_spanning
-        name: "ACS712 spanning"
-        internal: true
-        pin: ${pin_acs712}
-        attenuation: ${adc_demping}
-        update_interval: ${adc_interval}
-        filters:
-          - sliding_window_moving_average:
-              window_size: ${offset_venster}
-              send_every: ${offset_elke}
-        on_value:
-          - lambda: |-
-              id(g_offset_v) = x;
-              id(g_offset_ok) = x >= ${offset_min_v} && x <= ${offset_max_v};
-      # FR-006
-      # RMS van het AC-deel over 100 ms, elke 500 ms, omgerekend naar ampère. Meet in de lus,
-      # zonder te blokkeren (research R7).
-      - platform: ct_clamp
-        id: pompstroom_rms
-        name: "Pompstroom RMS"
-        internal: true
-        sensor: acs712_spanning
-        sample_duration: ${stroom_venster}
-        update_interval: ${stroom_interval}
-        filters:
-          - multiply: ${acs712_a_per_v}
-        on_value:
-          - script.execute: pomp_bijwerken
-      # FR-009
-      - platform: template
-        id: looptijd_laatste_pompbeurt
-        name: "Looptijd laatste pompbeurt"
-        unit_of_measurement: s
-        device_class: duration
-        accuracy_decimals: 0
-      # Diagnose: om de drempel af te stellen (quickstart §5 stap 5).
-      - platform: template
-        id: pompstroom
-        name: "Pompstroom"
-        unit_of_measurement: A
-        device_class: current
-        state_class: measurement
-        entity_category: diagnostic
-        accuracy_decimals: 2
-        update_interval: never
-        lambda: 'return id(g_stroom_a);'
-      # FR-016; bankverificatie (ongeveer 1,25 V in rust)
-      - platform: template
-        id: offset_stroomsensor
-        name: "Offset stroomsensor"
-        unit_of_measurement: V
-        device_class: voltage
-        state_class: measurement
-        entity_category: diagnostic
-        accuracy_decimals: 2
-        update_interval: never
-        lambda: 'return id(g_offset_v);'
-
-    # FR-008
-    # Aan = draait, uit = stil, onbekend bij een onmogelijke stroommeting.
-    binary_sensor:
-      - platform: template
-        id: pomp
-        name: "Pomp"
-        device_class: running
-
-    script:
-      # FR-006, FR-009, FR-011; data-model §4
-      # De pompstatus bij elke stroomwaarde: STIL -> START_KANDIDAAT -> DRAAIT ->
-      # STOP_KANDIDAAT -> STIL, met 2 s debounce en uit-hysterese op 70 % van de drempel.
-      - id: pomp_bijwerken
-        then:
-          - lambda: |-
-              const float stroom = id(pompstroom_rms).state;
-              if (std::isnan(stroom)) return;
-              const uint32_t now = millis();
-              const uint8_t oud = id(g_pomp_status);
-              uint8_t nieuw = oud;
-              if (!id(g_offset_ok)) {
-                nieuw = ${pomp_onbekend};  // onmogelijke meting; geen gebeurtenis
-                id(g_stroom_a) = NAN;
-              } else {
-                id(g_stroom_a) = stroom;
-                const float aan = id(pomp_stroomdrempel_a).state;
-                const float uit = aan * ${pomp_uit_factor};
-                switch (oud) {
-                  case ${pomp_onbekend}:
-                  case ${pomp_stil}:
-                    if (stroom >= aan) {
-                      nieuw = ${pomp_start_kandidaat};
-                      id(g_pomp_start_ms) = now;  // het eerste venster boven de drempel
-                      id(g_niveau_start_cm) = id(g_hoogte_cm);
-                    } else {
-                      nieuw = ${pomp_stil};
-                    }
-                    break;
-                  case ${pomp_start_kandidaat}:
-                    if (stroom < uit) {
-                      nieuw = ${pomp_stil};  // korte piek: geen start (FR-011)
-                    } else if ((uint32_t) (now - id(g_pomp_start_ms)) >= ${pomp_debounce_ms}) {
-                      nieuw = ${pomp_draait};
-                      const float start_cm = id(g_niveau_start_cm);
-                      id(gebeurtenis_melden).execute(
-                          std::string("pomp_start"),
-                          std::isnan(start_cm) ? std::string("niveau onbekend")
-                                               : str_sprintf("niveau %.1f cm", start_cm));
-                    }
-                    break;
-                  case ${pomp_draait}:
-                    if (stroom < uit) {
-                      nieuw = ${pomp_stop_kandidaat};
-                      id(g_pomp_stop_kandidaat_ms) = now;
-                    }
-                    break;
-                  default:  // STOP_KANDIDAAT
-                    if (stroom >= uit) {
-                      nieuw = ${pomp_draait};  // korte dip: de pomp draait door
-                    } else if ((uint32_t) (now - id(g_pomp_stop_kandidaat_ms)) >= ${pomp_debounce_ms}) {
-                      nieuw = ${pomp_stil};
-                      id(g_looptijd_s) = roundf(
-                          (float) (id(g_pomp_stop_kandidaat_ms) - id(g_pomp_start_ms)) / ${ms_per_s});
-                      id(looptijd_laatste_pompbeurt).publish_state(id(g_looptijd_s));
-                      const float hoogte = id(g_hoogte_cm);
-                      id(gebeurtenis_melden).execute(
-                          std::string("pomp_stop"),
-                          std::isnan(hoogte)
-                              ? str_sprintf("looptijd %.0f s, niveau onbekend", id(g_looptijd_s))
-                              : str_sprintf("looptijd %.0f s, niveau %.1f cm", id(g_looptijd_s), hoogte));
-                    }
-                    break;
-                }
-              }
-              id(g_pomp_status) = nieuw;
-              // De zichtbare toestand (draait, stil of onbekend) direct naar HA en de led.
-              auto zichtbaar = [](uint8_t status) -> uint8_t {
-                if (status == ${pomp_onbekend}) return ${pomp_onbekend};
-                return (status == ${pomp_draait} || status == ${pomp_stop_kandidaat}) ? ${pomp_draait}
-                                                                                      : ${pomp_stil};
-              };
-              if (zichtbaar(nieuw) != zichtbaar(oud)) {
-                if (nieuw == ${pomp_onbekend}) {
-                  id(pomp).invalidate_state();
-                } else {
-                  id(pomp).publish_state(zichtbaar(nieuw) == ${pomp_draait});
-                }
-                id(pompstroom).update();
-                id(led_patroon_kiezen).execute();
-              }
-
-    # Diagnose elke 10 s naar HA.
-    interval:
-      - interval: ${publicatie_interval}
-        then:
-          - component.update: pompstroom
-          - component.update: offset_stroomsensor
-
-  # -------------------------------------------------------------------------------------------
-  # ---- 5. Meldingen ----
+  # ---- 4. Meldingen ----
   # -------------------------------------------------------------------------------------------
   meldingen:
     globals:
@@ -894,18 +620,14 @@ packages:
         type: uint8_t
         restore_value: false
         initial_value: '0'
-      # Waterhoogte en pompstatus, hier al gedeclareerd omdat melding_stap ze in de tekst van
-      # een melding gebruikt; sectie 3 en 4 vullen ze.
+      # Waterhoogte, hier al gedeclareerd omdat melding_stap hem in de tekst van een melding
+      # gebruikt; sectie 3 vult hem.
       - id: g_hoogte_cm
         type: float
         restore_value: false
         initial_value: 'NAN'
-      - id: g_pomp_status
-        type: uint8_t
-        restore_value: false
-        initial_value: '${pomp_onbekend}'
 
-    # FR-012 t/m FR-016, FR-018, randgeval "niet ingesteld"
+    # FR-012, FR-016, FR-018, randgeval "niet ingesteld"
     # Eén binary sensor per melding; HA maakt er via het pakket een alert van.
     binary_sensor:
       - platform: template
@@ -913,24 +635,8 @@ packages:
         name: "Hoogwater"
         device_class: problem
       - platform: template
-        id: pomp_start_niet
-        name: "Pomp start niet"
-        device_class: problem
-      - platform: template
-        id: pomp_pompt_niet_af
-        name: "Pomp pompt niet af"
-        device_class: problem
-      - platform: template
-        id: pomp_draait_te_lang
-        name: "Pomp draait te lang"
-        device_class: problem
-      - platform: template
         id: niveausensor_storing
         name: "Niveausensor storing"
-        device_class: problem
-      - platform: template
-        id: stroomsensor_storing
-        name: "Stroomsensor storing"
         device_class: problem
       - platform: template
         id: niet_ingesteld
@@ -945,11 +651,11 @@ packages:
         update_interval: never
 
     script:
-      # FR-012 t/m FR-016, FR-019, FR-021, FR-022, FR-026; data-model §5
-      # De tekst bij een melding noemt de melding, het niveau en de pomp (FR-019); de alerts in
-      # het HA-pakket voegen de oorzaak in gewone taal en "sinds" toe.
+      # FR-012, FR-016, FR-019, FR-021, FR-022, FR-026; data-model §5
+      # De tekst bij een melding noemt de melding en het niveau (FR-019; 004 FR-009); de alerts
+      # in het HA-pakket voegen de oorzaak in gewone taal en "sinds" toe.
       # De levenscyclus van één melding: INACTIEF -> IN_AFWACHTING -> ACTIEF -> INACTIEF. Eén
-      # script voor alle zeven, zodat er geen dubbele logica is (research R5). Elk
+      # script voor alle drie, zodat er geen dubbele logica is (research R5). Elk
       # beoordelingsscript geeft de voorwaarden mee:
       # - beoordelen: false = vasthouden; een actieve melding blijft staan, een lopende
       #   wachttijd stopt;
@@ -966,12 +672,9 @@ packages:
         then:
           - lambda: |-
               static binary_sensor::BinarySensor *const sensoren[${aantal_meldingen}] = {
-                  id(hoogwater), id(pomp_start_niet), id(pomp_pompt_niet_af),
-                  id(pomp_draait_te_lang), id(niveausensor_storing), id(stroomsensor_storing),
-                  id(niet_ingesteld)};
+                  id(hoogwater), id(niveausensor_storing), id(niet_ingesteld)};
               static const char *const namen[${aantal_meldingen}] = {
-                  "hoogwater", "pomp_start_niet", "pomp_pompt_niet_af", "pomp_draait_te_lang",
-                  "niveausensor_storing", "stroomsensor_storing", "niet_ingesteld"};
+                  "hoogwater", "niveausensor_storing", "niet_ingesteld"};
               const uint32_t now = millis();
               auto &fase = id(g_melding_fase)[index];
               auto &sinds = id(g_melding_sinds_ms)[index];
@@ -1018,14 +721,10 @@ packages:
                 id(g_actieve_set) |= (1u << index);
                 sensoren[index]->publish_state(true);
                 const float hoogte = id(g_hoogte_cm);
-                const char *pomp = id(g_pomp_status) == ${pomp_onbekend} ? "onbekend"
-                                   : ${pomp_draait_nu}                   ? "draait"
-                                                                         : "stil";
                 id(gebeurtenis_melden).execute(
                     std::string("melding_actief"),
-                    std::isnan(hoogte)
-                        ? str_sprintf("%s, niveau onbekend, pomp %s", namen[index], pomp)
-                        : str_sprintf("%s, niveau %.1f cm, pomp %s", namen[index], hoogte, pomp));
+                    std::isnan(hoogte) ? str_sprintf("%s, niveau onbekend", namen[index])
+                                       : str_sprintf("%s, niveau %.1f cm", namen[index], hoogte));
               }
               if (herstel) {
                 id(g_actieve_set) &= (uint8_t) ~(1u << index);
@@ -1081,108 +780,23 @@ packages:
               hersteltijd_ms: 0
               onderdrukken: false
 
-      # FR-016
-      # Storing van de stroomsensor: de offset 10 s buiten 0,9-1,6 V; herstel na 10 s binnen het
-      # bereik. Wordt ook zonder instellingen beoordeeld.
-      - id: melding_stroomsensor_storing_beoordelen
-        then:
-          - script.execute:
-              id: melding_stap
-              index: ${idx_stroomsensor_storing}
-              beoordelen: true
-              activeren: !lambda 'return !id(g_offset_ok);'
-              herstellen: !lambda 'return id(g_offset_ok);'
-              wachttijd_ms: ${offset_storing_ms}
-              hersteltijd_ms: ${offset_storing_ms}
-              onderdrukken: false
-
-      # De drie pompwaarschuwingen (FR-013 t/m FR-015) samen:
-      # - onderdrukt zonder instellingen;
-      # - niet beoordeeld bij een onbekende pompstatus: een actieve waarschuwing blijft staan.
-
-      # FR-013, FR-021
-      # Het niveau staat meer dan de marge boven het inschakelniveau en de pomp staat stil,
-      # gedurende de wachttijd. Herstel: de pomp draait, of het niveau zakt 2 cm onder die grens.
-      - id: melding_pomp_start_niet_beoordelen
-        then:
-          - script.execute:
-              id: melding_stap
-              index: ${idx_pomp_start_niet}
-              beoordelen: !lambda 'return id(g_pomp_status) != ${pomp_onbekend};'
-              activeren: !lambda |-
-                return ${niveau_bruikbaar} && ${pomp_staat_stil} &&
-                       id(g_hoogte_cm) > id(g_inschakelniveau_cm) + id(start_marge_cm).state;
-              herstellen: !lambda |-
-                return ${pomp_draait_nu} ||
-                       (${niveau_bruikbaar} &&
-                        id(g_hoogte_cm) <
-                            id(g_inschakelniveau_cm) + id(start_marge_cm).state - ${start_niet_herstel_cm});
-              wachttijd_ms: !lambda 'return (int) (id(start_wachttijd_s).state * ${ms_per_s});'
-              hersteltijd_ms: 0
-              onderdrukken: !lambda 'return !id(g_ingesteld);'
-
-      # FR-014
-      # De pomp draait al de controletijd en het niveau is minder dan de minimale daling gezakt.
-      # Herstel: binnen een pompbeurt is de daling wel gehaald. Een NAN maakt elke vergelijking
-      # onwaar.
-      - id: melding_pomp_pompt_niet_af_beoordelen
-        then:
-          - script.execute:
-              id: melding_stap
-              index: ${idx_pomp_pompt_niet_af}
-              beoordelen: !lambda 'return id(g_pomp_status) != ${pomp_onbekend};'
-              activeren: !lambda |-
-                return ${pomp_draait_nu} && ${niveau_bruikbaar} &&
-                       (uint32_t) (millis() - id(g_pomp_start_ms)) >=
-                           (uint32_t) (id(afpomp_controletijd_s).state * ${ms_per_s}) &&
-                       id(g_niveau_start_cm) - id(g_hoogte_cm) < id(afpomp_min_daling_cm).state;
-              herstellen: !lambda |-
-                return ${pomp_draait_nu} && ${niveau_bruikbaar} &&
-                       id(g_niveau_start_cm) - id(g_hoogte_cm) >= id(afpomp_min_daling_cm).state;
-              wachttijd_ms: 0
-              hersteltijd_ms: 0
-              onderdrukken: !lambda 'return !id(g_ingesteld);'
-
-      # FR-015
-      # De pomp draait langer dan de maximale looptijd; daarvoor is geen niveau nodig. Herstel:
-      # de pomp staat stil.
-      - id: melding_pomp_draait_te_lang_beoordelen
-        then:
-          - script.execute:
-              id: melding_stap
-              index: ${idx_pomp_draait_te_lang}
-              beoordelen: !lambda 'return id(g_pomp_status) != ${pomp_onbekend};'
-              activeren: !lambda |-
-                return ${pomp_draait_nu} &&
-                       (uint32_t) (millis() - id(g_pomp_start_ms)) >
-                           (uint32_t) (id(max_looptijd_min).state * ${ms_per_min});
-              herstellen: !lambda 'return ${pomp_staat_stil};'
-              wachttijd_ms: 0
-              hersteltijd_ms: 0
-              onderdrukken: !lambda 'return !id(g_ingesteld);'
-
-      # FR-012 t/m FR-018
+      # FR-012, FR-016, FR-018
       # Elke seconde: alle meldingen beoordelen, daarna de status en de signalering bijwerken.
       - id: meldingen_beoordelen
         then:
           - script.execute: melding_niet_ingesteld_beoordelen
           - script.execute: melding_hoogwater_beoordelen
           - script.execute: melding_niveausensor_storing_beoordelen
-          - script.execute: melding_stroomsensor_storing_beoordelen
-          - script.execute: melding_pomp_start_niet_beoordelen
-          - script.execute: melding_pomp_pompt_niet_af_beoordelen
-          - script.execute: melding_pomp_draait_te_lang_beoordelen
           - script.execute: status_bijwerken
 
       # FR-018
-      # De apparaatstatus: ALARM > WAARSCHUWING > NIET_INGESTELD > STORING > NORMAAL
-      # (data-model §5). Alleen bij een verandering gepubliceerd.
+      # De apparaatstatus: ALARM > NIET_INGESTELD > STORING > NORMAAL (004 data-model §3).
+      # Alleen bij een verandering gepubliceerd.
       - id: status_bijwerken
         then:
           - lambda: |-
               const uint8_t actief = id(g_actieve_set);
               const char *nieuw = (actief & ${bits_alarm})                  ? "alarm"
-                                  : (actief & ${bits_waarschuwing})         ? "waarschuwing"
                                   : (actief & (1u << ${idx_niet_ingesteld})) ? "niet_ingesteld"
                                   : (actief & ${bits_storing})              ? "storing"
                                                                             : "normaal";
@@ -1202,12 +816,12 @@ packages:
           - script.execute: meldingen_beoordelen
 
   # -------------------------------------------------------------------------------------------
-  # ---- 6. Instellingen ----
+  # ---- 5. Instellingen ----
   # -------------------------------------------------------------------------------------------
   # FR-023, FR-024, FR-028; data-model §1, research R11
   instellingen:
     globals:
-      # De vijf instellingen met onderlinge regels bewaren hun geaccepteerde waarde zelf. Zo
+      # De vier instellingen met onderlinge regels bewaren hun geaccepteerde waarde zelf. Zo
       # komt een afgewezen waarde na een herstart niet terug (research R11). De verplichte
       # beginnen op NAN: "nog niet ingesteld".
       - id: g_afstand_leeg_cm
@@ -1215,10 +829,6 @@ packages:
         restore_value: true
         initial_value: 'NAN'
       - id: g_afstand_vol_cm
-        type: float
-        restore_value: true
-        initial_value: 'NAN'
-      - id: g_inschakelniveau_cm
         type: float
         restore_value: true
         initial_value: 'NAN'
@@ -1272,23 +882,6 @@ packages:
               id: instelling_toepassen
               sleutel: "afstand_vol_cm"
               waarde: !lambda 'return x;'
-      # FR-013
-      - platform: template
-        id: inschakelniveau_cm
-        name: "Inschakelniveau"
-        entity_category: config
-        mode: box
-        unit_of_measurement: cm
-        min_value: ${inschakelniveau_cm_min}
-        max_value: ${inschakelniveau_cm_max}
-        step: ${inschakelniveau_cm_stap}
-        update_interval: never
-        lambda: 'return id(g_inschakelniveau_cm);'
-        set_action:
-          - script.execute:
-              id: instelling_toepassen
-              sleutel: "inschakelniveau_cm"
-              waarde: !lambda 'return x;'
       # FR-012
       - platform: template
         id: alarmdrempel_pct
@@ -1340,71 +933,6 @@ packages:
         initial_value: ${hoogwater_wachttijd_s_std}
         optimistic: true
         restore_value: true
-      # FR-013
-      - platform: template
-        id: start_marge_cm
-        name: "Marge pomp start niet"
-        entity_category: config
-        mode: box
-        unit_of_measurement: cm
-        min_value: ${start_marge_cm_min}
-        max_value: ${start_marge_cm_max}
-        step: ${start_marge_cm_stap}
-        initial_value: ${start_marge_cm_std}
-        optimistic: true
-        restore_value: true
-      # FR-013
-      - platform: template
-        id: start_wachttijd_s
-        name: "Wachttijd pomp start niet"
-        entity_category: config
-        mode: box
-        unit_of_measurement: s
-        min_value: ${start_wachttijd_s_min}
-        max_value: ${start_wachttijd_s_max}
-        step: ${start_wachttijd_s_stap}
-        initial_value: ${start_wachttijd_s_std}
-        optimistic: true
-        restore_value: true
-      # FR-014
-      - platform: template
-        id: afpomp_controletijd_s
-        name: "Controletijd afpompen"
-        entity_category: config
-        mode: box
-        unit_of_measurement: s
-        min_value: ${afpomp_controletijd_s_min}
-        max_value: ${afpomp_controletijd_s_max}
-        step: ${afpomp_controletijd_s_stap}
-        initial_value: ${afpomp_controletijd_s_std}
-        optimistic: true
-        restore_value: true
-      # FR-014
-      - platform: template
-        id: afpomp_min_daling_cm
-        name: "Minimale daling afpompen"
-        entity_category: config
-        mode: box
-        unit_of_measurement: cm
-        min_value: ${afpomp_min_daling_cm_min}
-        max_value: ${afpomp_min_daling_cm_max}
-        step: ${afpomp_min_daling_cm_stap}
-        initial_value: ${afpomp_min_daling_cm_std}
-        optimistic: true
-        restore_value: true
-      # FR-015
-      - platform: template
-        id: max_looptijd_min
-        name: "Maximale looptijd pomp"
-        entity_category: config
-        mode: box
-        unit_of_measurement: min
-        min_value: ${max_looptijd_min_min}
-        max_value: ${max_looptijd_min_max}
-        step: ${max_looptijd_min_stap}
-        initial_value: ${max_looptijd_min_std}
-        optimistic: true
-        restore_value: true
       # FR-016
       - platform: template
         id: sensorstoring_wachttijd_s
@@ -1416,19 +944,6 @@ packages:
         max_value: ${sensorstoring_wachttijd_s_max}
         step: ${sensorstoring_wachttijd_s_stap}
         initial_value: ${sensorstoring_wachttijd_s_std}
-        optimistic: true
-        restore_value: true
-      # FR-006
-      - platform: template
-        id: pomp_stroomdrempel_a
-        name: "Stroomdrempel pomp"
-        entity_category: config
-        mode: box
-        unit_of_measurement: A
-        min_value: ${pomp_stroomdrempel_a_min}
-        max_value: ${pomp_stroomdrempel_a_max}
-        step: ${pomp_stroomdrempel_a_stap}
-        initial_value: ${pomp_stroomdrempel_a_std}
         optimistic: true
         restore_value: true
       # FR-028
@@ -1455,15 +970,13 @@ packages:
           - lambda: |-
               const float leeg = id(g_afstand_leeg_cm);
               const float vol = id(g_afstand_vol_cm);
-              const float inschakel = id(g_inschakelniveau_cm);
-              id(g_ingesteld) = !std::isnan(leeg) && !std::isnan(vol) && !std::isnan(inschakel) &&
+              id(g_ingesteld) = !std::isnan(leeg) && !std::isnan(vol) &&
                                 leeg >= vol + ${geometrie_min_verschil_cm} &&
-                                inschakel < leeg - vol &&
                                 id(g_alarmdrempel_pct) - id(g_herstelmarge_pct) > 0;
 
       # FR-023, FR-024; randgeval "ongeldige instellingen"
       # Een nieuwe waarde voor een instelling met regels. De regels gelden voor de kandidaatset
-      # (de vijf waarden met de nieuwe waarde), en alleen als alle waarden erin gezet zijn.
+      # (de vier waarden met de nieuwe waarde), en alleen als alle waarden erin gezet zijn.
       # Afgewezen: de oude waarde blijft en wordt opnieuw gepubliceerd, zodat HA terugspringt.
       - id: instelling_toepassen
         parameters:
@@ -1473,7 +986,6 @@ packages:
           - lambda: |-
               float leeg = id(g_afstand_leeg_cm);
               float vol = id(g_afstand_vol_cm);
-              float inschakel = id(g_inschakelniveau_cm);
               float drempel = id(g_alarmdrempel_pct);
               float marge = id(g_herstelmarge_pct);
               float *doel;
@@ -1485,9 +997,6 @@ packages:
               } else if (sleutel == "afstand_vol_cm") {
                 doel = &id(g_afstand_vol_cm); entiteit = id(afstand_vol_cm);
                 vol = waarde; geometrie = true;
-              } else if (sleutel == "inschakelniveau_cm") {
-                doel = &id(g_inschakelniveau_cm); entiteit = id(inschakelniveau_cm);
-                inschakel = waarde;
               } else if (sleutel == "alarmdrempel_pct") {
                 doel = &id(g_alarmdrempel_pct); entiteit = id(alarmdrempel_pct);
                 drempel = waarde;
@@ -1507,9 +1016,6 @@ packages:
                   !(leeg >= vol + ${geometrie_min_verschil_cm})) {
                 reden = str_sprintf("afstand_leeg_cm moet minstens %.0f cm groter zijn dan "
                                     "afstand_vol_cm", ${geometrie_min_verschil_cm});
-              } else if (!std::isnan(leeg) && !std::isnan(vol) && !std::isnan(inschakel) &&
-                         !(inschakel < leeg - vol)) {
-                reden = "inschakelniveau_cm moet kleiner zijn dan het meetbereik";
               } else if (!(drempel - marge > 0)) {
                 reden = "alarmdrempel_pct min herstelmarge_pct moet groter zijn dan 0";
               }
@@ -1533,7 +1039,7 @@ packages:
               }
 
   # -------------------------------------------------------------------------------------------
-  # ---- 7. Signalering: ledbalk, patroonscripts ----
+  # ---- 6. Signalering: ledbalk, patroonscripts ----
   # -------------------------------------------------------------------------------------------
   # FR-027, FR-028 (led-helderheid); 002 FR-001–FR-007; 003 FR-001–FR-017;
   # contracts/lokale-signalering.md, 003 contracts/ledbalk.md, 001 research R9, 003 research R1-R3
@@ -1713,7 +1219,7 @@ packages:
                                 transition_length: 0s
                             - delay: !lambda 'return uit_ms;'
 
-      # FR-027; 002 FR-002, FR-003; 003 FR-002, FR-003, FR-013, FR-014, FR-017;
+      # FR-027; 002 FR-002, FR-003; 003 FR-002, FR-003, FR-013, FR-017; 004 FR-005, FR-007;
       # contracts/ledbalk.md §1
       # Kiest het patroon van led 1: de bovenste regel die geldt, wint. Start led_knipperen alleen als
       # het patroon of de helderheid veranderd is.
@@ -1723,13 +1229,11 @@ packages:
               const uint8_t actief = id(g_actieve_set);
               int patroon;
               if (actief & ${bits_alarm}) patroon = ${led_patroon_alarm};
-              else if (actief & ${bits_waarschuwing}) patroon = ${led_patroon_waarschuwing};
               else if (actief & ${bits_storing}) patroon = ${led_patroon_storing};
               else if (id(g_opstarten)) patroon = ${led_patroon_opstarten};
               // niveau onbekend: paars, ook vóór de storingsmelding (003 FR-017)
               else if (!${niveau_bruikbaar}) patroon = ${led_patroon_storing};
               else if (!id(g_verbonden)) patroon = ${led_patroon_geen_verbinding};
-              else if (${pomp_draait_nu}) patroon = ${led_patroon_pomp};
               else patroon = ${led_patroon_normaal};
               float helderheid = ${led_helderheid_nu};
               if (patroon == ${led_patroon_alarm}) {
@@ -1743,11 +1247,6 @@ packages:
                   id(led_knipperen).execute(${led_rood_r}, ${led_rood_g}, ${led_rood_b},
                       ${led_rood_w}, helderheid, ${led_alarm_aan_ms}, ${led_alarm_uit_ms});
                   break;
-                case ${led_patroon_waarschuwing}:
-                  id(led_knipperen).execute(${led_oranje_r}, ${led_oranje_g}, ${led_oranje_b},
-                      ${led_oranje_w}, helderheid, ${led_waarschuwing_aan_ms},
-                      ${led_waarschuwing_uit_ms});
-                  break;
                 case ${led_patroon_storing}:
                   id(led_knipperen).execute(${led_paars_r}, ${led_paars_g}, ${led_paars_b},
                       ${led_paars_w}, helderheid, ${led_storing_aan_ms}, ${led_storing_uit_ms});
@@ -1760,10 +1259,6 @@ packages:
                   id(led_knipperen).execute(${led_wit_r}, ${led_wit_g}, ${led_wit_b},
                       ${led_wit_w}, helderheid, ${led_geen_verbinding_aan_ms},
                       ${led_geen_verbinding_uit_ms});
-                  break;
-                case ${led_patroon_pomp}:
-                  id(led_knipperen).execute(${led_blauw_r}, ${led_blauw_g}, ${led_blauw_b},
-                      ${led_blauw_w}, helderheid, ${led_pomp_aan_ms}, ${led_pomp_uit_ms});
                   break;
                 default:
                   id(led_knipperen).execute(${led_blauw_r}, ${led_blauw_g}, ${led_blauw_b},
@@ -1832,7 +1327,7 @@ packages:
                     }
 
   # -------------------------------------------------------------------------------------------
-  # ---- 8. Gebeurtenissen en diagnose ----
+  # ---- 7. Gebeurtenissen en diagnose ----
   # -------------------------------------------------------------------------------------------
   # FR-010, FR-026; data-model §6, research R13
   gebeurtenissen:
@@ -1848,8 +1343,6 @@ packages:
         id: gebeurtenis
         name: "Gebeurtenis"
         event_types:
-          - pomp_start
-          - pomp_stop
           - melding_actief
           - melding_hersteld
           - herstart

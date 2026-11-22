@@ -14,7 +14,7 @@ principe III).
   Home Assistant (`last_changed`).
 - **Namen**: codenamen staan tussen haakjes. `id`'s in de YAML zijn Nederlandse snake_case.
   De getalcodes van toestanden en meldingen hebben in de YAML een naam in het
-  `substitutions:`-blok (bijvoorbeeld `${pomp_draait}`); scripts gebruiken nooit het getal
+  `substitutions:`-blok (bijvoorbeeld `${niveau_geldig}`); scripts gebruiken nooit het getal
   zelf (constitutie II en V).
 
 ---
@@ -29,17 +29,10 @@ apparaat blijvend bewaart (FR-024).
 |---|---|---|---|---|---|---|
 | `afstand_leeg_cm` | cm (sensor → water bij leeg) | — (verplicht) | 10–400 | 0,1 | global + regels | FR-002 |
 | `afstand_vol_cm` | cm (sensor → water bij vol) | — (verplicht) | 3–390 | 0,1 | global + regels | FR-002 |
-| `inschakelniveau_cm` | cm boven leeg-niveau | — (verplicht) | 0–400 | 0,1 | global + regels | FR-013 |
 | `alarmdrempel_pct` | % vulgraad | 80 | 10–120 | 1 | global + regels | FR-012 |
 | `hoogwater_wachttijd_s` | s | 30 | 0–600 | 1 | number | FR-012 |
-| `start_marge_cm` | cm | 5 | 0–50 | 1 | number | FR-013 |
-| `start_wachttijd_s` | s | 120 | 10–3600 | 1 | number | FR-013 |
-| `afpomp_controletijd_s` | s | 180 | 30–3600 | 1 | number | FR-014 |
-| `afpomp_min_daling_cm` | cm | 2 | 0,5–50 | 0,1 | number | FR-014 |
-| `max_looptijd_min` | min | 10 | 1–240 | 1 | number | FR-015 |
 | `sensorstoring_wachttijd_s` | s | 300 | 30–3600 | 1 | number | FR-016 |
 | `herstelmarge_pct` | procentpunt | 5 | 1–50 | 1 | global + regels | FR-021 |
-| `pomp_stroomdrempel_a` | A (RMS) | 0,5 | 0,05–20 | 0,05 | number | FR-006 |
 | `led_helderheid_pct` | % | 30 | 0–100 | 1 | number | FR-028 |
 
 **De twee soorten opslag** (research R11):
@@ -57,14 +50,13 @@ geweigerd. Alle grenzen en standaardwaarden staan in het `substitutions:`-blok.
 
 **Validatieregels** (een ongeldige wijziging wordt geweigerd en de oude waarde blijft staan):
 - `afstand_leeg_cm` ≥ `afstand_vol_cm` + 10. Het verschil is het meetbereik `bereik_cm`.
-- `inschakelniveau_cm` < `bereik_cm`.
 - `alarmdrempel_pct` − `herstelmarge_pct` > 0.
 - Een regel wordt alleen beoordeeld als alle waarden die erin voorkomen, gezet zijn.
 - Een wijziging van de geometrie (`afstand_leeg_cm` of `afstand_vol_cm`) zet de niveaumeting
   terug naar ONBEKEND (zie 3).
 
-**Afgeleide toestand**: `ingesteld` = de drie verplichte waarden zijn gezet en voldoen aan de
-regels. Is dat niet zo, dan is de melding **NIET_INGESTELD** actief.
+**Afgeleide toestand**: `ingesteld` = de twee verplichte waarden (`afstand_leeg_cm`,
+`afstand_vol_cm`) zijn gezet en voldoen aan de regels (004: het inschakelniveau is vervallen). Is dat niet zo, dan is de melding **NIET_INGESTELD** actief.
 
 **Vaste constanten**, in het `substitutions:`-blok:
 
@@ -77,12 +69,6 @@ regels. Is dat niet zo, dan is de melding **NIET_INGESTELD** actief.
 | Maximale niveausnelheid | 2 cm/s, Δt maximaal 5 s, minimale tolerantie 3 cm | R6, FR-005 |
 | Inleren | 5 medianen binnen 2 cm | R6 |
 | Niveau "verouderd" na | 30 s zonder geaccepteerde waarde | FR-003 |
-| Stroommeting | `ct_clamp`: venster 100 ms, elke 500 ms | R7 |
-| Omrekening ACS712 | 30,303 A per V op de pin (= 1 / (0,066 × 0,5)) | R7 |
-| Pomp-debounce | 2 s (aan en uit) | FR-011 |
-| Pomp-uit-hysterese | 70 % van `pomp_stroomdrempel_a` | R7 |
-| Offset stroomsensor geldig | 0,9–1,6 V (na de deler), storing na 10 s, herstel na 10 s | R7, FR-016 |
-| Herstelmarge "pomp start niet" | 2 cm | §5 |
 | Verwerking en meldingen | elke 1 s | R5 |
 | Publicatie waterhoogte en vulgraad | elke 10 s, en direct bij een statuswijziging | FR-003 |
 | Opstarten (led 1 wit) | maximaal 10 s | lokale signalering |
@@ -141,49 +127,21 @@ ONBEKEND ───────────────────────�
 
 ## 4. Pompstatus (`PumpState`) en pompcyclus (`PumpCycle`)
 
-Opgeslagen in `g_pomp_status` (0 = ONBEKEND, 1 = STIL, 2 = START_KANDIDAAT, 3 = DRAAIT,
-4 = STOP_KANDIDAAT). De overgangen staan allemaal in het script `pomp_bijwerken`, dat bij
-elke waarde van de stroommeting draait (elke 500 ms).
-
-```text
-          I ≥ drempel                     2 s aaneengesloten (I ≥ 70%)
-STIL ───────────────▶ START_KANDIDAAT ─────────────────────▶ DRAAIT
- ▲  ◀─────────────── (I < 70% drempel)                         │ I < 70% drempel
- │                                                             ▼
- └──────────── 2 s aaneengesloten (I < 70%) ──────────── STOP_KANDIDAAT
-                                                      (I ≥ 70% → DRAAIT)
-ONBEKEND: offset buiten 0,9–1,6 V, of nog geen meting. Bij de eerstvolgende geldige meting
-          naar STIL, of bij I ≥ drempel naar START_KANDIDAAT.
-```
-
-| Pompcyclus-veld | Type / eenheid | Betekenis | In ESPHome |
-|---|---|---|---|
-| `start_ms` | uint32 | eerste meting boven de drempel | `g_pomp_start_ms` |
-| `looptijd_s` | float, s (`NAN` tot de eerste stop) | bij de stop: (eerste meting onder 70 %) − `start_ms`, afgerond | sensor "Looptijd laatste pompbeurt" |
-| `niveau_start_cm` | float, cm | `hoogte_cm` bij de start (referentie voor FR-014); NAN als het niveau toen onbekend was | `g_niveau_start_cm` |
-
-- "Draait" omvat DRAAIT en STOP_KANDIDAAT. "Staat stil" omvat STIL en START_KANDIDAAT.
-- Binary sensor "Pomp": aan = draait, uit = stil, onbekend bij ONBEKEND.
-- Gebeurtenissen: `pomp_start` bij START_KANDIDAAT → DRAAIT, en `pomp_stop` bij
-  STOP_KANDIDAAT → STIL. Bij ONBEKEND is er geen gebeurtenis.
-- Korte pieken van minder dan 2 s leveren geen start op (FR-011).
+Vervallen met `specs/004-stroomsensor-verwijderen`.
 
 ## 5. Melding (`Alert`)
 
 | Type | Ernst | Wordt actief als | Wordt hersteld als | Spec |
 |---|---|---|---|---|
 | `HOOGWATER` | ALARM | `vulgraad_pct > alarmdrempel_pct` gedurende `hoogwater_wachttijd_s` | `vulgraad_pct < alarmdrempel_pct − herstelmarge_pct`. **Niet** beoordelen bij een niveaustatus ≠ GELDIG (vasthouden) | FR-012, FR-021, FR-022 |
-| `POMP_START_NIET` | WAARSCHUWING | `hoogte_cm > inschakelniveau_cm + start_marge_cm` en de pomp staat stil, gedurende `start_wachttijd_s` | de pomp draait, of het niveau zakt onder `inschakelniveau_cm + start_marge_cm − 2 cm` | FR-013 |
-| `POMP_POMPT_NIET_AF` | WAARSCHUWING | de pomp draait ≥ `afpomp_controletijd_s` en `niveau_start_cm − hoogte_cm < afpomp_min_daling_cm` | binnen een cyclus is de daling ≥ `afpomp_min_daling_cm` | FR-014 |
-| `POMP_DRAAIT_TE_LANG` | WAARSCHUWING | de pomp draait > `max_looptijd_min` | de pomp staat stil | FR-015 |
 | `NIVEAUSENSOR_STORING` | STORING | niveaustatus = STORING | niveaustatus = GELDIG | FR-016 |
-| `STROOMSENSOR_STORING` | STORING | offset buiten 0,9–1,6 V gedurende 10 s | offset 10 s binnen het bereik | FR-016 |
 | `NIET_INGESTELD` | STORING | geen geldige verplichte instellingen | instellingen geldig | randgeval |
 
 **Levenscyclus per melding**: één script met parameters, `melding_stap`. Elk type heeft een
 eigen beoordelingsscript dat de voorwaarden bepaalt. De toestand staat per melding in
 `globals`-arrays (`g_melding_fase`, `g_melding_sinds_ms`, `g_melding_herstel_sinds_ms`),
-geïndexeerd met de volgorde van de tabel.
+geïndexeerd met de volgorde van de tabel (0 = HOOGWATER, 1 = NIVEAUSENSOR_STORING,
+2 = NIET_INGESTELD; 004 data-model §3).
 
 ```text
 INACTIEF ──voorwaarde waar──▶ IN_AFWACHTING ──wachttijd verstreken──▶ ACTIEF ──herstel (+ hersteltijd)──▶ INACTIEF
@@ -200,17 +158,15 @@ INACTIEF ──voorwaarde waar──▶ IN_AFWACHTING ──wachttijd verstreken
 - **Afhankelijkheden**:
   - Is de niveaustatus ≠ GELDIG, dan worden niveau-afhankelijke meldingen niet nieuw
     geactiveerd. HOOGWATER blijft vastgehouden (FR-022).
-  - Is de pompstatus ONBEKEND, dan worden de drie pompwaarschuwingen niet beoordeeld. Een
-    actieve waarschuwing blijft staan.
-  - Bij NIET_INGESTELD worden HOOGWATER en de pompwaarschuwingen onderdrukt, en wordt
-    NIVEAUSENSOR_STORING niet nieuw geactiveerd. STROOMSENSOR_STORING wordt altijd beoordeeld.
+  - Bij NIET_INGESTELD wordt HOOGWATER onderdrukt, en wordt NIVEAUSENSOR_STORING niet nieuw
+    geactiveerd.
 - **Na een herstart** beginnen alle meldingen bij INACTIEF (de globals worden niet bewaard)
   en worden ze opnieuw beoordeeld.
 
 **Apparaatstatus** (`DeviceStatus`, text sensor "Status", en voor de led): volgorde
-ALARM > WAARSCHUWING > NIET_INGESTELD > STORING > NORMAAL. `niet_ingesteld` is een aparte
-waarde voor de duidelijkheid. De publicatiewaarden zijn `normaal`, `waarschuwing`, `alarm`,
-`storing` en `niet_ingesteld`.
+ALARM > NIET_INGESTELD > STORING > NORMAAL. `niet_ingesteld` is een aparte waarde voor de
+duidelijkheid. De publicatiewaarden zijn `normaal`, `alarm`, `storing` en `niet_ingesteld`.
+De soort WAARSCHUWING en de vier pomp- en stroommeldingen zijn vervallen met 004.
 
 ## 6. Gebeurtenis (`Event`)
 
@@ -219,9 +175,7 @@ als tekst naar de text sensor "Laatste gebeurtenis".
 
 | `event_type` | Details in "Laatste gebeurtenis" | Moment |
 |---|---|---|
-| `pomp_start` | niveau bij de start (cm) | START_KANDIDAAT → DRAAIT |
-| `pomp_stop` | looptijd (s), niveau (cm) | STOP_KANDIDAAT → STIL |
-| `melding_actief` | melding, niveau (cm), pomp | melding → ACTIEF |
+| `melding_actief` | melding, niveau (cm) | melding → ACTIEF |
 | `melding_hersteld` | melding | melding → INACTIEF |
 | `herstart` | herstartreden | eenmalig, 3 s na de eerste API-verbinding na het opstarten |
 | `instelling_afgewezen` | instelling, waarde, reden | ongeldige combinatie |
@@ -234,11 +188,12 @@ Het apparaat bewaart geen gebeurtenissen. Is er geen verbinding, dan gaan ze ver
 
 Vervallen met [002](../002-zoemer-verwijderen/data-model.md): de zoemer, "stil" en de
 led-bevestiging. Uitgebreid met [003](../003-niveau-ledbalk/data-model.md): zes leds, met de
-niveaubalk op led 2–6.
+niveaubalk op led 2–6. Met [004](../004-stroomsensor-verwijderen/data-model.md) zijn de patronen
+"waarschuwing" en "pomp draait" vervallen; led 1 kiest uit zes patronen.
 
 | Veld | Betekenis | In ESPHome |
 |---|---|---|
-| `led_patroon` | patroon van led 1; volgt uit de apparaatstatus, de niveaustatus ("niveau onbekend", 003 FR-017), de pompstatus, de verbinding en "opstarten"; wordt nooit onderbroken | script `led_patroon_kiezen` → script `led_knipperen` op partitie `statusled` (led 1); huidige keuze in `g_led_patroon` |
+| `led_patroon` | patroon van led 1; volgt uit de apparaatstatus, de niveaustatus ("niveau onbekend", 003 FR-017), de verbinding en "opstarten"; wordt nooit onderbroken | script `led_patroon_kiezen` → script `led_knipperen` op partitie `statusled` (led 1); huidige keuze in `g_led_patroon` |
 | `verbonden` | is de API verbonden (voor het led-patroon "geen verbinding") | `g_verbonden`, gezet door `api: on_client_connected` en `on_client_disconnected` |
 | `opstarten` | waar tot de eerste GELDIGE niveaumeting, maximaal 10 s | `g_opstarten` |
 | `niveaubalk_aantal` | aantal brandende balkleds (led 2–6), 0–5; 0 bij een ongeldig niveau | script `niveaubalk_bijwerken`; `g_niveaubalk_aantal` |
